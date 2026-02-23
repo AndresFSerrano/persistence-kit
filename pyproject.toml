@@ -1,0 +1,36 @@
+[tool.poetry]
+name = "persistence-kit"
+version = "0.1.0"
+description = "Reusable persistence and repository toolkit"
+authors = ["Andres Felipe Serrano Barrios <andresfserrano1@gmail.com>"]
+readme = "README.md"
+license = "MIT"
+packages = [{ include = "persistence_kit" }]
+include = ["persistence_kit/py.typed"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Database",
+  "Typing :: Typed",
+]
+keywords = ["repository", "persistence", "mongodb", "sqlalchemy", "async"]
+homepage = "https://pypi.org/project/persistence-kit/"
+repository = "https://github.com/andresfserrano/persistence-kit"
+documentation = "https://github.com/andresfserrano/persistence-kit#readme"
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+motor = "^3.7.1"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.43"}
+asyncpg = "^0.30.0"
+typing-extensions = "^4.12.0"
+pydantic-settings = "^2.3.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
