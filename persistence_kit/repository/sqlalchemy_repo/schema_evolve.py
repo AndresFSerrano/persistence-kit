@@ -1,7 +1,17 @@
+import hashlib
+
 from dataclasses import fields as dc_fields
 from sqlalchemy import inspect, text
 from sqlalchemy.dialects import postgresql
 from persistence_kit.repository.sqlalchemy_repo.table_factory import _unwrap_optional, _sa_type
+
+
+def _safe_identifier(name: str, limit: int = 63) -> str:
+    if len(name) <= limit:
+        return name
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+    head = name[: limit - len(digest) - 1]
+    return f"{head}_{digest}"
 
 def ensure_missing_columns(sync_conn, table, entity_type):
     inspector = inspect(sync_conn)
@@ -28,10 +38,11 @@ def _constraint_exists(sync_conn, table_name: str, constraint_name: str) -> bool
 
 def ensure_foreign_keys(sync_conn, table, fk_map: dict[str, tuple[str, str]]) -> None:
     for local_col, (target_tbl, target_col) in fk_map.items():
-        cname = f'fk_{table.name}_{local_col}__{target_tbl}_{target_col}'
+        index_name = _safe_identifier(f"idx_{table.name}_{local_col}")
+        cname = _safe_identifier(f'fk_{table.name}_{local_col}__{target_tbl}_{target_col}')
         if _constraint_exists(sync_conn, table.name, cname):
             continue
-        sync_conn.execute(text(f'CREATE INDEX IF NOT EXISTS "idx_{table.name}_{local_col}" ON "{table.name}" ("{local_col}")'))
+        sync_conn.execute(text(f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{table.name}" ("{local_col}")'))
         sync_conn.execute(text(
             f'ALTER TABLE "{table.name}" '
             f'ADD CONSTRAINT "{cname}" FOREIGN KEY ("{local_col}") '

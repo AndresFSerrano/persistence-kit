@@ -6,7 +6,7 @@ try:
 except ImportError:
     from typing_extensions import override
 
-from persistence_kit.abstract_repository import Repository
+from persistence_kit.contracts.repository import Repository
 from persistence_kit.repository.filter_ops import (
     is_multi_value,
     is_range_dict,
@@ -125,6 +125,20 @@ class MemoryRepository(Repository[T, TId], Generic[T, TId]):
         return self._items.get(eid) if eid else None
 
     @override
+    async def count(self) -> int:
+        return len(self._items)
+
+    @override
+    async def count_by_fields(
+        self,
+        criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
+    ) -> int:
+        if not criteria:
+            return len(self._items)
+        rows = await self.list_by_fields(criteria, offset=0, limit=None)
+        return len(rows)
+
+    @override
     async def list_by_fields(
         self,
         criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
@@ -161,3 +175,22 @@ class MemoryRepository(Repository[T, TId], Generic[T, TId]):
         if limit is not None:
             matched = matched[:limit]
         return matched
+
+    @override
+    async def distinct_values(
+        self,
+        field: str,
+        criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]] | None = None,
+    ) -> Sequence[Any]:
+        rows: Sequence[T]
+        if criteria:
+            rows = await self.list_by_fields(criteria, offset=0, limit=None)
+        else:
+            rows = await self.list(offset=0, limit=len(self._items) or 1)
+        seen: list[Any] = []
+        for row in rows:
+            value = _get_field_value(row, field)
+            if value is None or value in seen:
+                continue
+            seen.append(value)
+        return seen

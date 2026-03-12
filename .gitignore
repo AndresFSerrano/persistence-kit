@@ -5,8 +5,16 @@ __pycache__/
 .Python
 .venv/
 venv/
+.env
+.env.*
+!.env.example
 build/
 dist/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.idea/
+*.iml

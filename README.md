@@ -6,7 +6,28 @@ Reusable persistence toolkit with async repository implementations for:
 - `mongo` (Motor)
 - `postgres` (SQLAlchemy async + asyncpg)
 
+Documentation:
+
+- `docs/repositories_and_relations.md`
+
 Author: Andres Felipe Serrano Barrios
+
+## Package Structure
+
+`persistence_kit` is organized by responsibility:
+
+- `contracts/`: repository interfaces
+- `settings/`: shared settings, parsers, and persistence constants
+- `api/`: reusable API exceptions, handlers, and route loading helpers
+- `bootstrap/`: startup helpers, configuration registry, and seed orchestration
+- `utils/`: transversal helpers such as upsert utilities
+- `repository/`: concrete repository implementations by backend
+- `repository_factory/`: entity registry, repository creation, and populated view repository
+
+Recommended rule:
+
+- import from `persistence_kit` when the public facade is enough
+- import from the internal folders only when you need an implementation-specific module
 
 ## Installation
 
@@ -17,8 +38,8 @@ pip install persistence-kit
 ## Quick Start
 
 ```python
-from persistence_kit.repository_factory import register_entity, get_repo
-from persistence_kit.config import Database
+from persistence_kit import Database
+from persistence_kit.repository_factory import get_repo, register_entity
 
 # register entities during application startup
 register_entity(
@@ -34,6 +55,52 @@ register_entity(
 repo = get_repo("user")
 ```
 
+## Public API
+
+Preferred public imports:
+
+```python
+from persistence_kit import (
+    Repository,
+    ViewRepository,
+    RepoSettings,
+    Database,
+    ConfigRegistry,
+    configuration,
+    SeederProvider,
+    build_api_router,
+    handle_service_errors,
+    handle_repository_errors,
+    NotFoundException,
+    ValidationException,
+    BusinessRuleException,
+    DatabaseException,
+)
+from persistence_kit.repository_factory import (
+    register_entity,
+    get_repo,
+    get_repo_view,
+    provide_repo,
+    provide_view_repo,
+    set_registry_initializer,
+)
+```
+
+Use internal paths only for implementation details, for example:
+
+- `persistence_kit.repository.sqlalchemy_repo.sqlalchemy_repo`
+- `persistence_kit.repository_factory.factory.repository_factory`
+- `persistence_kit.repository_factory.registry.entity_registry`
+- `persistence_kit.repository_factory.view.populating_repository`
+
+## Typical Host Application Flow
+
+1. Define your entities as dataclasses.
+2. Register them in a local bootstrap such as `register_defaults`.
+3. Call `set_registry_initializer(register_defaults)` during application startup.
+4. Resolve repositories through `get_repo(...)`, `get_repo_view(...)`, or FastAPI providers.
+5. Use `ConfigRegistry` and `SeederProvider` only as shared bootstrap infrastructure. The concrete registrations remain in the host app.
+
 ## Supported Environment Variables
 
 - `REPO_DATABASE=memory|mongo|postgres`
@@ -44,6 +111,20 @@ repo = get_repo("user")
 - `POSTGRES_HOST`
 - `POSTGRES_PORT`
 - `POSTGRES_DB`
+
+## Local Development
+
+Create the local environment and run tests from the library root:
+
+```bash
+poetry lock
+poetry install --with dev
+poetry run pytest -q
+```
+
+Current validation baseline:
+
+- `persistence_kit`: `138 passed`
 
 ## Publish to PyPI (Manual)
 

@@ -8,7 +8,7 @@ except ImportError:
 
 import asyncio
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorCollection
-from persistence_kit.abstract_repository import Repository
+from persistence_kit.contracts.repository import Repository
 from persistence_kit.repository.filter_ops import (
     is_multi_value,
     is_range_dict,
@@ -53,6 +53,35 @@ def _range_to_mongo(value: Mapping[str, Any]) -> Mapping[str, Any]:
             query["$ne"] = v
     return query
 
+
+def _build_query(
+    mapper: EntityMapper[T, TId],
+    criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    if not criteria:
+        return {}
+    for v in criteria.values():
+        if is_multi_value(v) and not v:
+            return None
+        if is_range_dict(v) and v.get("in") == []:
+            return None
+
+    query: dict[str, Any] = {}
+    for k, v in criteria.items():
+        f = _normalize_field(mapper, k)
+        if v is None:
+            query[f] = {"$eq": None}
+        elif is_multi_value(v):
+            query[f] = {"$in": list(v)}
+        elif is_range_dict(v):
+            mongo_range = _range_to_mongo(v)
+            if not mongo_range:
+                return None
+            query[f] = mongo_range
+        else:
+            query[f] = v
+    return query
+
 async def _find_by_fields(
     col: AsyncIOMotorCollection,
     mapper: EntityMapper[T, TId],
@@ -65,26 +94,9 @@ async def _find_by_fields(
 ) -> Sequence[T]:
     if not criteria:
         return []
-    for v in criteria.values():
-        if is_multi_value(v) and not v:
-            return []
-        if is_range_dict(v) and v.get("in") == []:
-            return []
-
-    query: dict[str, Any] = {}
-    for k, v in criteria.items():
-        f = _normalize_field(mapper, k)
-        if v is None:
-            query[f] = {"$eq": None}
-        elif is_multi_value(v):
-            query[f] = {"$in": list(v)}
-        elif is_range_dict(v):
-            mongo_range = _range_to_mongo(v)
-            if not mongo_range:
-                return []
-            query[f] = mongo_range
-        else:
-            query[f] = v
+    query = _build_query(mapper, criteria)
+    if query is None:
+        return []
 
     cursor = col.find(query)
 
@@ -184,6 +196,24 @@ class MongoRepository(Repository[T, TId], Generic[T, TId]):
         return self._mapper.from_document(doc) if doc else None
 
     @override
+    async def count(self) -> int:
+        await self._ensure_indexes()
+        return int(await self._col.count_documents({}))
+
+    @override
+    async def count_by_fields(
+        self,
+        criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
+    ) -> int:
+        await self._ensure_indexes()
+        if not criteria:
+            return await self.count()
+        query = _build_query(self._mapper, criteria)
+        if query is None:
+            return 0
+        return int(await self._col.count_documents(query))
+
+    @override
     async def list_by_fields(
         self,
         criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
@@ -203,3 +233,18 @@ class MongoRepository(Repository[T, TId], Generic[T, TId]):
             sort_by=sort_by,
             sort_desc=sort_desc,
         )
+
+    @override
+    async def distinct_values(
+        self,
+        field: str,
+        criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]] | None = None,
+    ) -> Sequence[Any]:
+        await self._ensure_indexes()
+        if not self._mapper.has_attr(field):
+            raise ValueError(f"Invalid distinct attribute: {field}")
+        normalized_field = _normalize_field(self._mapper, field)
+        query = _build_query(self._mapper, criteria or {})
+        if query is None:
+            return []
+        return await self._col.distinct(normalized_field, query)

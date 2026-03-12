@@ -6,10 +6,10 @@ try:
 except ImportError:
     from typing_extensions import override
 
-from sqlalchemy import Table, select, insert, update as sql_update, delete as sql_delete, Index, and_
+from sqlalchemy import Table, select, insert, update as sql_update, delete as sql_delete, Index, and_, func, distinct
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from persistence_kit.abstract_repository import Repository
+from persistence_kit.contracts.repository import Repository
 from persistence_kit.repository.filter_ops import (
     is_multi_value,
     is_range_dict,
@@ -19,7 +19,7 @@ from persistence_kit.repository.sqlalchemy_repo.schema_evolve import (
     ensure_missing_columns,
     ensure_foreign_keys,
 )
-from persistence_kit.repository_factory.entity_registry import build_fk_map_from_registry
+from persistence_kit.repository_factory.registry.entity_registry import build_fk_map_from_registry
 
 T = TypeVar("T")
 TId = TypeVar("TId", bound=Hashable)
@@ -37,27 +37,20 @@ class SqlAlchemyEntityMapper(Protocol[T, TId]):
     def attr_to_storage(self, name: str) -> str: ...
 
 
-async def _select_by_fields(
-    engine: AsyncEngine,
+def _build_where_clauses(
+    table: Table,
     mapper: SqlAlchemyEntityMapper[T, TId],
     criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
-    *,
-    offset: int = 0,
-    limit: Optional[int] = 50,
-    sort_by: str | None = None,
-    sort_desc: bool = False,
-) -> Sequence[T]:
+) -> list[Any] | None:
     if not criteria:
         return []
     for v in criteria.values():
         if is_multi_value(v) and not v:
-            return []
+            return None
         if is_range_dict(v) and v.get("in") == []:
-            return []
+            return None
 
-    table = mapper.table()
-    clauses = []
-
+    clauses: list[Any] = []
     for field, value in criteria.items():
         if not mapper.has_attr(field):
             raise ValueError(
@@ -75,7 +68,7 @@ async def _select_by_fields(
         elif is_range_dict(value):
             ops = list(iter_range_ops(value))
             if not ops:
-                return []
+                return None
             for op, v in ops:
                 if op == "between":
                     clauses.append(col.between(v[0], v[1]))
@@ -95,6 +88,25 @@ async def _select_by_fields(
                     clauses.append(col != v)
         else:
             clauses.append(col == value)
+    return clauses
+
+
+async def _select_by_fields(
+    engine: AsyncEngine,
+    mapper: SqlAlchemyEntityMapper[T, TId],
+    criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
+    *,
+    offset: int = 0,
+    limit: Optional[int] = 50,
+    sort_by: str | None = None,
+    sort_desc: bool = False,
+) -> Sequence[T]:
+    table = mapper.table()
+    clauses = _build_where_clauses(table, mapper, criteria)
+    if clauses is None:
+        return []
+    if not criteria:
+        return []
 
     stmt = select(table).where(and_(*clauses))
 
@@ -116,6 +128,24 @@ async def _select_by_fields(
         rows = res.mappings().all()
 
     return [mapper.from_row(dict(r)) for r in rows]
+
+
+async def _count_by_fields(
+    engine: AsyncEngine,
+    mapper: SqlAlchemyEntityMapper[T, TId],
+    criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
+) -> int:
+    table = mapper.table()
+    clauses = _build_where_clauses(table, mapper, criteria)
+    if clauses is None:
+        return 0
+    stmt = select(func.count()).select_from(table)
+    if clauses:
+        stmt = stmt.where(and_(*clauses))
+    async with engine.begin() as conn:
+        res = await conn.execute(stmt)
+        value = res.scalar_one()
+    return int(value)
 
 
 class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
@@ -238,6 +268,26 @@ class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
         return self._mapper.from_row(dict(row)) if row else None
 
     @override
+    async def count(self) -> int:
+        await self._ensure_indexes()
+        table = self._mapper.table()
+        stmt = select(func.count()).select_from(table)
+        async with self._engine.begin() as conn:
+            res = await conn.execute(stmt)
+            value = res.scalar_one()
+        return int(value)
+
+    @override
+    async def count_by_fields(
+        self,
+        criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
+    ) -> int:
+        await self._ensure_indexes()
+        if not criteria:
+            return await self.count()
+        return await _count_by_fields(self._engine, self._mapper, criteria)
+
+    @override
     async def list_by_fields(
         self,
         criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
@@ -257,3 +307,27 @@ class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
             sort_by=sort_by,
             sort_desc=sort_desc,
         )
+
+    @override
+    async def distinct_values(
+        self,
+        field: str,
+        criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]] | None = None,
+    ) -> Sequence[Any]:
+        await self._ensure_indexes()
+        if not self._mapper.has_attr(field):
+            raise ValueError(f"Invalid distinct attribute: {field}")
+        table = self._mapper.table()
+        col_name = self._mapper.attr_to_storage(field)
+        col = table.c[col_name]
+        stmt = select(distinct(col))
+        if criteria:
+            clauses = _build_where_clauses(table, self._mapper, criteria)
+            if clauses is None:
+                return []
+            if clauses:
+                stmt = stmt.where(and_(*clauses))
+        async with self._engine.begin() as conn:
+            res = await conn.execute(stmt)
+            values = res.scalars().all()
+        return [value for value in values if value is not None]
