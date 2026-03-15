@@ -237,3 +237,74 @@ async def test_count_and_count_by_fields_delegate_to_inner():
     repo = PopulatingRepository("parent", inner, lambda _: None)
     assert await repo.count() == 2
     assert await repo.count_by_fields({"id": 10}) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_by_fields_supports_nested_text_search_and_pagination(monkeypatch):
+    import persistence_kit.repository_factory.view.populating_repository as pr
+
+    parents = [
+        Parent(id=10, child_id=1, child_ids=[]),
+        Parent(id=20, child_id=2, child_ids=[]),
+        Parent(id=30, child_id=3, child_ids=[]),
+    ]
+    child_repo = FakeChildRepo(
+        by_id={
+            1: Child(id=1, code="MAT101", name="Calculo"),
+            2: Child(id=2, code="FIS101", name="Fisica"),
+            3: Child(id=3, code="PROF01", name="Juan Perez"),
+        },
+        by_code={},
+    )
+    inner = FakeInnerRepo(parents[0], entities=parents)
+    monkeypatch.setattr(
+        pr,
+        "get_entity_config",
+        lambda _: {"relations": {"child": {"local_field": "child_id", "target": "child", "by": "id", "many": False}}},
+    )
+
+    repo = PopulatingRepository("parent", inner, lambda _: child_repo)
+    result = await repo.list_by_fields(
+        {
+            "or": [
+                {"child.name": {"icontains": "fis"}},
+                {"child.name": {"icontains": "juan"}},
+            ]
+        },
+        offset=0,
+        limit=1,
+        include=["child"],
+        sort_by="child.name",
+        sort_desc=False,
+    )
+
+    assert len(result) == 1
+    assert result[0]["child"]["name"] == "Fisica"
+
+
+@pytest.mark.asyncio
+async def test_count_by_fields_supports_nested_criteria(monkeypatch):
+    import persistence_kit.repository_factory.view.populating_repository as pr
+
+    parents = [
+        Parent(id=10, child_id=1, child_ids=[]),
+        Parent(id=20, child_id=2, child_ids=[]),
+    ]
+    child_repo = FakeChildRepo(
+        by_id={
+            1: Child(id=1, code="MAT101", name="Calculo"),
+            2: Child(id=2, code="MAT102", name="Matematicas Discretas"),
+        },
+        by_code={},
+    )
+    inner = FakeInnerRepo(parents[0], entities=parents)
+    monkeypatch.setattr(
+        pr,
+        "get_entity_config",
+        lambda _: {"relations": {"child": {"local_field": "child_id", "target": "child", "by": "id", "many": False}}},
+    )
+
+    repo = PopulatingRepository("parent", inner, lambda _: child_repo)
+    total = await repo.count_by_fields({"child.name": {"icontains": "mat"}})
+
+    assert total == 1

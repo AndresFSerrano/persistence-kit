@@ -169,6 +169,28 @@ async def test_select_by_fields_validation():
 
 
 @pytest.mark.asyncio
+async def test_select_by_fields_supports_text_ops_and_logical_groups():
+    engine = FakeEngine([[{"id": 1, "name": "Calculo", "category": "matematicas"}]])
+    result = await _select_by_fields(
+        engine,
+        ItemMapper(build_table()),
+        {
+            "or": [
+                {"name": {"icontains": "calc"}},
+                {"category": {"startswith": "mate"}},
+            ]
+        },
+        offset=0,
+        limit=10,
+    )
+
+    assert result[0].name == "Calculo"
+    stmt = engine.conn.statements[0]
+    assert isinstance(stmt, Select)
+    assert stmt._where_criteria
+
+
+@pytest.mark.asyncio
 async def test_init_indexes_calls_helpers(monkeypatch):
     import persistence_kit.repository.sqlalchemy_repo.sqlalchemy_repo as mod
 

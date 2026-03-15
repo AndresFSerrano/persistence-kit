@@ -5,6 +5,11 @@ from typing import Any, Callable, Generic, Hashable, Iterable, Mapping, Optional
 
 from persistence_kit.contracts.repository import Repository
 from persistence_kit.contracts.view_repository import ViewRepository
+from persistence_kit.repository.filter_ops import (
+    is_logical_key,
+    iter_criteria_groups,
+    match_criteria,
+)
 from persistence_kit.repository_factory.registry.entity_registry import get_entity_config
 
 T = TypeVar("T")
@@ -28,6 +33,55 @@ def _field_from_entity(entity: Any, field: str, base: dict | None = None) -> Any
         return getattr(entity, field)
     payload = base if base is not None else _to_dict(entity)
     return payload.get(field)
+
+
+def _get_nested_value(payload: Mapping[str, Any], path: str) -> Any:
+    current: Any = payload
+    for part in path.split("."):
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(part)
+        if current is None:
+            return None
+    return current
+
+
+def _criteria_has_nested_fields(criteria: Mapping[str, Any]) -> bool:
+    for field, expected in criteria.items():
+        if is_logical_key(field):
+            for group in iter_criteria_groups(expected):
+                if _criteria_has_nested_fields(group):
+                    return True
+            continue
+        if "." in field:
+            return True
+    return False
+
+
+def _collect_support_includes(criteria: Mapping[str, Any]) -> set[str]:
+    required: set[str] = set()
+    for field, expected in criteria.items():
+        if is_logical_key(field):
+            for group in iter_criteria_groups(expected):
+                required.update(_collect_support_includes(group))
+            continue
+        if "." not in field:
+            continue
+        relation_path, _, _ = field.rpartition(".")
+        if relation_path:
+            required.add(relation_path)
+    return required
+
+
+def _merge_includes(include: Iterable[str], extra: Iterable[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in list(include) + list(extra):
+        if value in seen:
+            continue
+        seen.add(value)
+        merged.append(value)
+    return merged
 
 
 class PopulatingRepository(ViewRepository[T, TId], Repository[T, TId], Generic[T, TId]):
@@ -78,6 +132,16 @@ class PopulatingRepository(ViewRepository[T, TId], Repository[T, TId], Generic[T
         self,
         criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
     ) -> int:
+        if criteria and _criteria_has_nested_fields(criteria):
+            support_includes = _collect_support_includes(criteria)
+            items = await self._list_all_entities()
+            lookup_cache: dict[tuple[str, str, Hashable], Any] = {}
+            count = 0
+            for item in items:
+                row = await self._populate(item, support_includes, lookup_cache)
+                if self._row_matches_criteria(row, criteria):
+                    count += 1
+            return count
         return await self._inner.count_by_fields(criteria)
 
     async def distinct_values(
@@ -86,6 +150,42 @@ class PopulatingRepository(ViewRepository[T, TId], Repository[T, TId], Generic[T
         criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]] | None = None,
     ) -> Sequence[Any]:
         return await self._inner.distinct_values(field, criteria)
+
+    async def _list_all_entities(self) -> list[T]:
+        all_items: list[T] = []
+        cursor = 0
+        page_size = 1000
+        while True:
+            batch = await self._inner.list(offset=cursor, limit=page_size)
+            if not batch:
+                break
+            all_items.extend(batch)
+            if len(batch) < page_size:
+                break
+            cursor += page_size
+        return all_items
+
+    def _sort_populated_rows(
+        self,
+        rows: list[tuple[T, dict]],
+        sort_by: str | None,
+        *,
+        sort_desc: bool,
+    ) -> list[tuple[T, dict]]:
+        if sort_by is None:
+            return rows
+        return sorted(
+            rows,
+            key=lambda pair: _normalize_sort_value(_get_nested_value(pair[1], sort_by)),
+            reverse=sort_desc,
+        )
+
+    def _row_matches_criteria(
+        self,
+        row: Mapping[str, Any],
+        criteria: Mapping[str, Hashable | list[Hashable] | Mapping[str, Any]],
+    ) -> bool:
+        return match_criteria(criteria, lambda field: _get_nested_value(row, field))
 
     async def get_with(self, entity_id: TId, include: Iterable[str]) -> Optional[dict]:
         ent = await self.get(entity_id)
@@ -115,17 +215,7 @@ class PopulatingRepository(ViewRepository[T, TId], Repository[T, TId], Generic[T
     ) -> list[dict]:
         lookup_cache: dict[tuple[str, str, Hashable], Any] = {}
         if sort_by and "." in sort_by:
-            all_items: list[T] = []
-            cursor = 0
-            page_size = 1000
-            while True:
-                batch = await self._inner.list(offset=cursor, limit=page_size)
-                if not batch:
-                    break
-                all_items.extend(batch)
-                if len(batch) < page_size:
-                    break
-                cursor += page_size
+            all_items = await self._list_all_entities()
             ordered = await self._sort_entities_by_nested(
                 all_items,
                 sort_by,
@@ -157,6 +247,30 @@ class PopulatingRepository(ViewRepository[T, TId], Repository[T, TId], Generic[T
         sort_desc: bool = False,
     ) -> list[dict]:
         lookup_cache: dict[tuple[str, str, Hashable], Any] = {}
+        requested_includes = list(include)
+        if criteria and _criteria_has_nested_fields(criteria):
+            support_includes = _merge_includes(requested_includes, _collect_support_includes(criteria))
+            if sort_by and "." in sort_by:
+                relation_path, _, _ = sort_by.rpartition(".")
+                support_includes = _merge_includes(support_includes, [relation_path])
+            items = await self._list_all_entities()
+            hydrated: list[tuple[T, dict]] = []
+            for item in items:
+                support_row = await self._populate(item, support_includes, lookup_cache)
+                if self._row_matches_criteria(support_row, criteria):
+                    hydrated.append((item, support_row))
+            hydrated = self._sort_populated_rows(
+                hydrated,
+                sort_by,
+                sort_desc=sort_desc,
+            )
+            if offset:
+                hydrated = hydrated[offset:]
+            if limit is not None:
+                hydrated = hydrated[:limit]
+            if support_includes == requested_includes:
+                return [row for _, row in hydrated]
+            return [await self._populate(item, requested_includes, lookup_cache) for item, _ in hydrated]
         if sort_by and "." in sort_by:
             items = await self._inner.list_by_fields(
                 criteria,

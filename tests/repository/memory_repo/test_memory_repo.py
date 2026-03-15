@@ -246,6 +246,32 @@ async def test_list_by_fields_more_range_ops_and_sorting():
 
 
 @pytest.mark.asyncio
+async def test_list_by_fields_supports_text_ops_and_logical_groups():
+    repo = MemoryRepository[Entity, int](id_getter=lambda e: e.id)
+
+    e1 = Entity(id=1, name="Calculo Diferencial", group="matematicas")
+    e2 = Entity(id=2, name="Fisica I", group="ciencias")
+    e3 = Entity(id=3, name="Profesor Juan Perez", group="docentes")
+    await repo.add(e1)
+    await repo.add(e2)
+    await repo.add(e3)
+
+    by_text = await repo.list_by_fields({"name": {"icontains": "calculo"}})
+    assert by_text == [e1]
+
+    by_or = await repo.list_by_fields(
+        {
+            "or": [
+                {"name": {"icontains": "fisica"}},
+                {"group": {"icontains": "docen"}},
+            ]
+        },
+        sort_by="id",
+    )
+    assert by_or == [e2, e3]
+
+
+@pytest.mark.asyncio
 async def test_count_and_distinct_values():
     repo = MemoryRepository[Entity, int](id_getter=lambda e: e.id)
 

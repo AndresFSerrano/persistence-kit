@@ -7,9 +7,12 @@ except ImportError:
     from typing_extensions import override
 
 import asyncio
+import re
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorCollection
 from persistence_kit.contracts.repository import Repository
 from persistence_kit.repository.filter_ops import (
+    is_logical_key,
+    iter_criteria_groups,
     is_multi_value,
     is_range_dict,
     iter_range_ops,
@@ -51,6 +54,21 @@ def _range_to_mongo(value: Mapping[str, Any]) -> Mapping[str, Any]:
             query["$eq"] = v
         elif op == "ne":
             query["$ne"] = v
+        elif op == "contains":
+            query["$regex"] = re.escape(str(v))
+        elif op == "icontains":
+            query["$regex"] = re.escape(str(v))
+            query["$options"] = "i"
+        elif op == "startswith":
+            query["$regex"] = f"^{re.escape(str(v))}"
+        elif op == "istartswith":
+            query["$regex"] = f"^{re.escape(str(v))}"
+            query["$options"] = "i"
+        elif op == "endswith":
+            query["$regex"] = f"{re.escape(str(v))}$"
+        elif op == "iendswith":
+            query["$regex"] = f"{re.escape(str(v))}$"
+            query["$options"] = "i"
     return query
 
 
@@ -68,6 +86,17 @@ def _build_query(
 
     query: dict[str, Any] = {}
     for k, v in criteria.items():
+        if is_logical_key(k):
+            rendered_groups: list[dict[str, Any]] = []
+            for group in iter_criteria_groups(v):
+                rendered = _build_query(mapper, group)
+                if rendered is None:
+                    continue
+                rendered_groups.append(rendered)
+            if not rendered_groups:
+                return None
+            query[f"${k}"] = rendered_groups
+            continue
         f = _normalize_field(mapper, k)
         if v is None:
             query[f] = {"$eq": None}

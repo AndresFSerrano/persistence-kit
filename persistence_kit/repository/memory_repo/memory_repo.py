@@ -10,7 +10,7 @@ from persistence_kit.contracts.repository import Repository
 from persistence_kit.repository.filter_ops import (
     is_multi_value,
     is_range_dict,
-    iter_range_ops,
+    match_criteria,
 )
 
 T = TypeVar("T")
@@ -20,44 +20,6 @@ def _get_field_value(entity: Any, field: str) -> Any:
     if isinstance(entity, dict):
         return entity.get(field)
     return getattr(entity, field, None)
-
-def _match_value(val: Any, cond: Any) -> bool:
-    if cond is None:
-        return val is None
-    if is_multi_value(cond):
-        return val in cond
-    if is_range_dict(cond):
-        ops = list(iter_range_ops(cond))
-        if not ops:
-            return False
-        for op, v in ops:
-            if op == "between":
-                lo, hi = v
-                if val is None or val < lo or val > hi:
-                    return False
-            elif op == "gte":
-                if val is None or val < v:
-                    return False
-            elif op == "gt":
-                if val is None or val <= v:
-                    return False
-            elif op == "lte":
-                if val is None or val > v:
-                    return False
-            elif op == "lt":
-                if val is None or val >= v:
-                    return False
-            elif op == "in":
-                if val not in v:
-                    return False
-            elif op == "eq":
-                if val != v:
-                    return False
-            elif op == "ne":
-                if val == v:
-                    return False
-        return True
-    return val == cond
 
 class MemoryRepository(Repository[T, TId], Generic[T, TId]):
     def __init__(
@@ -157,13 +119,7 @@ class MemoryRepository(Repository[T, TId], Generic[T, TId]):
                 return []
         matched: list[T] = []
         for ent in self._items.values():
-            ok = True
-            for k, v in criteria.items():
-                val = _get_field_value(ent, k)
-                if not _match_value(val, v):
-                    ok = False
-                    break
-            if ok:
+            if match_criteria(criteria, lambda field: _get_field_value(ent, field)):
                 matched.append(ent)
         if sort_by is not None:
             matched.sort(

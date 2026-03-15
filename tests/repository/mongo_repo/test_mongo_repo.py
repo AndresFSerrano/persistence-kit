@@ -271,6 +271,29 @@ async def test_find_by_fields_range_ops_build_query():
 
 
 @pytest.mark.asyncio
+async def test_find_by_fields_builds_text_and_logical_query():
+    col = FakeCollectionForFind([])
+    mapper = FakeMapperForFind()
+
+    await _find_by_fields(
+        col,
+        mapper,
+        {
+            "or": [
+                {"name": {"icontains": "juan"}},
+                {"group": {"contains": "mate"}},
+            ]
+        },
+        offset=0,
+        limit=10,
+    )
+
+    assert col.last_find["query"]["$or"][0]["name"]["$regex"] == "juan"
+    assert col.last_find["query"]["$or"][0]["name"]["$options"] == "i"
+    assert col.last_find["query"]["$or"][1]["group"]["$regex"] == "mate"
+
+
+@pytest.mark.asyncio
 async def test_find_by_fields_unsupported_operator_raises():
     col = FakeCollectionForFind([])
     mapper = FakeMapperForFind()

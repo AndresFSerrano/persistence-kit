@@ -6,11 +6,13 @@ try:
 except ImportError:
     from typing_extensions import override
 
-from sqlalchemy import Table, select, insert, update as sql_update, delete as sql_delete, Index, and_, func, distinct
+from sqlalchemy import Table, select, insert, update as sql_update, delete as sql_delete, Index, and_, or_, func, distinct
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from persistence_kit.contracts.repository import Repository
 from persistence_kit.repository.filter_ops import (
+    is_logical_key,
+    iter_criteria_groups,
     is_multi_value,
     is_range_dict,
     iter_range_ops,
@@ -52,6 +54,19 @@ def _build_where_clauses(
 
     clauses: list[Any] = []
     for field, value in criteria.items():
+        if is_logical_key(field):
+            groups: list[Any] = []
+            for group in iter_criteria_groups(value):
+                nested = _build_where_clauses(table, mapper, group)
+                if nested is None:
+                    continue
+                if not nested:
+                    continue
+                groups.append(and_(*nested))
+            if not groups:
+                return None
+            clauses.append(or_(*groups) if field == "or" else and_(*groups))
+            continue
         if not mapper.has_attr(field):
             raise ValueError(
                 f"Field '{field}' is not a valid attribute for {mapper.entity_type().__name__}"
@@ -86,6 +101,18 @@ def _build_where_clauses(
                     clauses.append(col == v)
                 elif op == "ne":
                     clauses.append(col != v)
+                elif op == "contains":
+                    clauses.append(col.contains(str(v)))
+                elif op == "icontains":
+                    clauses.append(col.ilike(f"%{v}%"))
+                elif op == "startswith":
+                    clauses.append(col.startswith(str(v)))
+                elif op == "istartswith":
+                    clauses.append(col.ilike(f"{v}%"))
+                elif op == "endswith":
+                    clauses.append(col.endswith(str(v)))
+                elif op == "iendswith":
+                    clauses.append(col.ilike(f"%{v}"))
         else:
             clauses.append(col == value)
     return clauses
