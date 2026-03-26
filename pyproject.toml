@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "persistence-kit"
-version = "3.0.0"
+version = "3.0.1"
 description = "Reusable persistence and repository toolkit"
 authors = ["Andres Felipe Serrano Barrios <andresfserrano1@gmail.com>"]
 readme = "README.md"
