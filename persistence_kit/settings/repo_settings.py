@@ -12,11 +12,13 @@ class RepoSettings(BaseSettings):
     mongo_dsn: str | None = None
     mongo_db: str | None = None
 
+    postgres_dsn: str | None = None
     postgres_user: str | None = None
     postgres_password: str | None = None
     postgres_host: str | None = None
     postgres_port: int | None = 5432
     postgres_db: str | None = None
+    postgres_ssl: bool = False
 
     dynamodb_table_prefix: str = ""
     dynamodb_region: str = "us-east-1"
