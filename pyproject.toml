@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "persistence-kit"
-version = "2.0.0"
+version = "3.0.0"
 description = "Reusable persistence and repository toolkit"
 authors = ["Andres Felipe Serrano Barrios <andresfserrano1@gmail.com>"]
 readme = "README.md"
@@ -31,6 +31,7 @@ asyncpg = "^0.30.0"
 typing-extensions = "^4.12.0"
 pydantic-settings = "^2.3.0"
 fastapi = "^0.115.0"
+boto3 = "^1.35.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

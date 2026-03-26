@@ -18,6 +18,9 @@ class RepoSettings(BaseSettings):
     postgres_port: int | None = 5432
     postgres_db: str | None = None
 
+    dynamodb_table_prefix: str = ""
+    dynamodb_region: str = "us-east-1"
+
     @field_validator("cors_origins", mode="before")
     def split_origins(cls, value):
         return split_csv_list(value)

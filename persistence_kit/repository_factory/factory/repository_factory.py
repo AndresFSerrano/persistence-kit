@@ -10,6 +10,8 @@ from persistence_kit.contracts.view_repository import ViewRepository
 from persistence_kit.settings.constants import Database
 from persistence_kit.settings.repo_settings import RepoSettings
 from persistence_kit.repository.memory_repo.memory_repo import MemoryRepository
+from persistence_kit.repository.dynamodb_repo.dynamodb_mapper import DynamoMapper
+from persistence_kit.repository.dynamodb_repo.dynamodb_repo import DynamoRepository
 from persistence_kit.repository.mongo_repo.mongo_mapper import DataclassMapper
 from persistence_kit.repository.mongo_repo.mongo_repo import MongoRepository
 from persistence_kit.repository.sqlalchemy_repo.sqlalchemy_dataclass_mapper import SqlDataclassMapper
@@ -80,6 +82,21 @@ def _repo_cached(entity_key: str, resolved: Database) -> Repository[Any, UUID]:
             },
         )
         return MongoRepository[Any, UUID](db, mapper)
+
+    if resolved is Database.DYNAMODB:
+        prefix = settings.dynamodb_table_prefix
+        table_name = f"{prefix}{config['collection']}" if prefix else config["collection"]
+        dynamo_mapper = DynamoMapper(
+            entity_type,
+            table_name,
+            unique_fields={
+                key: (value if isinstance(value, str) else key)
+                for key, value in (config.get("unique") or {}).items()
+            },
+        )
+        return DynamoRepository[Any, UUID](
+            table_name, dynamo_mapper, region=settings.dynamodb_region
+        )
 
     if resolved is Database.POSTGRES:
         engine = get_engine()
