@@ -16,10 +16,21 @@ from persistence_kit.repository.filter_ops import (
     is_multi_value,
     is_range_dict,
     iter_range_ops,
+    normalize_search_text,
+    tokenize_search_text,
 )
 
 T = TypeVar("T")
 TId = TypeVar("TId", bound=Hashable)
+_ACCENT_CLASSES = {
+    "a": "[aáàäâã]",
+    "e": "[eéèëê]",
+    "i": "[iíìïî]",
+    "o": "[oóòöôõ]",
+    "u": "[uúùüû]",
+    "n": "[nñ]",
+    "c": "[cç]",
+}
 
 class EntityMapper(Protocol[T, TId]):
     def collection(self) -> str: ...
@@ -33,6 +44,36 @@ class EntityMapper(Protocol[T, TId]):
 
 def _normalize_field(mapper: EntityMapper[T, TId], field: str) -> str:
     return mapper.attr_to_storage(field)
+
+
+def _token_to_regex(token: str) -> str:
+    parts: list[str] = []
+    for ch in token:
+        parts.append(_ACCENT_CLASSES.get(ch, re.escape(ch)))
+    return "".join(parts)
+
+
+def _build_icontains_pattern(value: Any) -> str | None:
+    terms = tokenize_search_text(value)
+    if not terms:
+        return None
+    return "".join(f"(?=.*{_token_to_regex(term)})" for term in terms)
+
+
+def _build_ordered_pattern(value: Any, *, anchor_start: bool = False, anchor_end: bool = False) -> str | None:
+    normalized = normalize_search_text(value)
+    if not normalized:
+        return None
+    terms = tokenize_search_text(normalized)
+    if not terms:
+        return None
+    core = ".*".join(_token_to_regex(term) for term in terms)
+    if anchor_start:
+        core = f"^{core}"
+    if anchor_end:
+        core = f"{core}$"
+    return core
+
 
 def _range_to_mongo(value: Mapping[str, Any]) -> Mapping[str, Any]:
     query: dict[str, Any] = {}
@@ -57,17 +98,26 @@ def _range_to_mongo(value: Mapping[str, Any]) -> Mapping[str, Any]:
         elif op == "contains":
             query["$regex"] = re.escape(str(v))
         elif op == "icontains":
-            query["$regex"] = re.escape(str(v))
+            pattern = _build_icontains_pattern(v)
+            if pattern is None:
+                continue
+            query["$regex"] = pattern
             query["$options"] = "i"
         elif op == "startswith":
             query["$regex"] = f"^{re.escape(str(v))}"
         elif op == "istartswith":
-            query["$regex"] = f"^{re.escape(str(v))}"
+            pattern = _build_ordered_pattern(v, anchor_start=True)
+            if pattern is None:
+                continue
+            query["$regex"] = pattern
             query["$options"] = "i"
         elif op == "endswith":
             query["$regex"] = f"{re.escape(str(v))}$"
         elif op == "iendswith":
-            query["$regex"] = f"{re.escape(str(v))}$"
+            pattern = _build_ordered_pattern(v, anchor_end=True)
+            if pattern is None:
+                continue
+            query["$regex"] = pattern
             query["$options"] = "i"
     return query
 

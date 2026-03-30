@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any, Callable, Iterable, Mapping
 
 
 _SIMPLE_OPS = {"gte", "gt", "lte", "lt", "eq", "ne"}
 _STRING_OPS = {"contains", "icontains", "startswith", "istartswith", "endswith", "iendswith"}
 _LOGICAL_KEYS = {"or", "and"}
+_NON_ALNUM_RE = re.compile(r"[^0-9a-z]+")
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 def is_multi_value(value: Any) -> bool:
@@ -49,6 +53,23 @@ def iter_range_ops(value: Mapping[str, Any]) -> Iterable[tuple[str, Any]]:
     return items
 
 
+def normalize_search_text(value: Any) -> str:
+    if value is None:
+        return ""
+    normalized = unicodedata.normalize("NFKD", str(value))
+    without_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    lowered = without_marks.lower()
+    collapsed = _NON_ALNUM_RE.sub(" ", lowered)
+    return _WHITESPACE_RE.sub(" ", collapsed).strip()
+
+
+def tokenize_search_text(value: Any) -> list[str]:
+    normalized = normalize_search_text(value)
+    if not normalized:
+        return []
+    return normalized.split()
+
+
 def _matches_string_op(current: Any, op: str, expected: Any) -> bool:
     if current is None:
         return False
@@ -57,15 +78,25 @@ def _matches_string_op(current: Any, op: str, expected: Any) -> bool:
     if op == "contains":
         return expected_text in current_text
     if op == "icontains":
-        return expected_text.lower() in current_text.lower()
+        expected_tokens = tokenize_search_text(expected)
+        if not expected_tokens:
+            return False
+        normalized_current = normalize_search_text(current)
+        return all(token in normalized_current for token in expected_tokens)
     if op == "startswith":
         return current_text.startswith(expected_text)
     if op == "istartswith":
-        return current_text.lower().startswith(expected_text.lower())
+        normalized_expected = normalize_search_text(expected)
+        if not normalized_expected:
+            return False
+        return normalize_search_text(current).startswith(normalized_expected)
     if op == "endswith":
         return current_text.endswith(expected_text)
     if op == "iendswith":
-        return current_text.lower().endswith(expected_text.lower())
+        normalized_expected = normalize_search_text(expected)
+        if not normalized_expected:
+            return False
+        return normalize_search_text(current).endswith(normalized_expected)
     raise ValueError(f"Unsupported operator: {op}")
 
 

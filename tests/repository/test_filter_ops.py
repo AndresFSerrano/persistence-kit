@@ -1,6 +1,13 @@
 import pytest
 
-from persistence_kit.repository.filter_ops import iter_criteria_groups, iter_range_ops, match_criteria, match_value
+from persistence_kit.repository.filter_ops import (
+    iter_criteria_groups,
+    iter_range_ops,
+    match_criteria,
+    match_value,
+    normalize_search_text,
+    tokenize_search_text,
+)
 
 
 def test_iter_range_ops_empty_returns_empty():
@@ -42,6 +49,14 @@ def test_match_value_supports_text_operators():
     assert match_value("Juan Perez", {"contains": "Perez"})
     assert match_value("Juan Perez", {"istartswith": "juan"})
     assert match_value("Juan Perez", {"iendswith": "PEREZ"})
+
+
+def test_search_normalization_ignores_accents_symbols_and_spacing():
+    assert normalize_search_text("  Andrés / Serrano  ") == "andres serrano"
+    assert tokenize_search_text("  Andrés / Serrano  ") == ["andres", "serrano"]
+    assert match_value("Andrés Serrano", {"icontains": "andres / serrano"})
+    assert match_value("Andrés Serrano", {"istartswith": "andres"})
+    assert match_value("Andrés Serrano", {"iendswith": "SERRANO"})
 
 
 def test_match_criteria_supports_logical_groups():

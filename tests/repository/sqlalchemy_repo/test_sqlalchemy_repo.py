@@ -191,6 +191,24 @@ async def test_select_by_fields_supports_text_ops_and_logical_groups():
 
 
 @pytest.mark.asyncio
+async def test_select_by_fields_normalizes_icontains_terms_for_sql():
+    engine = FakeEngine([[{"id": 1, "name": "Andrés Serrano", "category": "docencia"}]])
+    await _select_by_fields(
+        engine,
+        ItemMapper(build_table()),
+        {"name": {"icontains": "andres / serrano"}},
+        offset=0,
+        limit=10,
+    )
+
+    stmt = engine.conn.statements[0]
+    sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert "translate" in sql.lower()
+    assert "%andres%" in sql
+    assert "%serrano%" in sql
+
+
+@pytest.mark.asyncio
 async def test_init_indexes_calls_helpers(monkeypatch):
     import persistence_kit.repository.sqlalchemy_repo.sqlalchemy_repo as mod
 

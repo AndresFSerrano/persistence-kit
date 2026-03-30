@@ -6,7 +6,7 @@ try:
 except ImportError:
     from typing_extensions import override
 
-from sqlalchemy import Table, select, insert, update as sql_update, delete as sql_delete, Index, and_, or_, func, distinct
+from sqlalchemy import Table, select, insert, update as sql_update, delete as sql_delete, Index, and_, or_, func, distinct, String, cast
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from persistence_kit.contracts.repository import Repository
@@ -16,6 +16,8 @@ from persistence_kit.repository.filter_ops import (
     is_multi_value,
     is_range_dict,
     iter_range_ops,
+    normalize_search_text,
+    tokenize_search_text,
 )
 from persistence_kit.repository.sqlalchemy_repo.schema_evolve import (
     ensure_missing_columns,
@@ -25,6 +27,8 @@ from persistence_kit.repository_factory.registry.entity_registry import build_fk
 
 T = TypeVar("T")
 TId = TypeVar("TId", bound=Hashable)
+_ACCENTED_CHARS = "ÁÀÄÂÃáàäâãÉÈËÊéèëêÍÌÏÎíìïîÓÒÖÔÕóòöôõÚÙÜÛúùüûÑñÇç"
+_PLAIN_CHARS = "AAAAAaaaaaEEEEeeeeIIIIiiiiOOOOOoooooUUUUuuuuNnCc"
 
 
 class SqlAlchemyEntityMapper(Protocol[T, TId]):
@@ -37,6 +41,12 @@ class SqlAlchemyEntityMapper(Protocol[T, TId]):
     def entity_type(self) -> type[T]: ...
     def has_attr(self, name: str) -> bool: ...
     def attr_to_storage(self, name: str) -> str: ...
+
+
+def _normalized_text_expr(col: Any) -> Any:
+    text_col = cast(func.coalesce(col, ""), String)
+    lowered = func.lower(func.translate(text_col, _ACCENTED_CHARS, _PLAIN_CHARS))
+    return func.regexp_replace(lowered, r"[^a-z0-9]+", " ", "g")
 
 
 def _build_where_clauses(
@@ -104,15 +114,26 @@ def _build_where_clauses(
                 elif op == "contains":
                     clauses.append(col.contains(str(v)))
                 elif op == "icontains":
-                    clauses.append(col.ilike(f"%{v}%"))
+                    normalized_terms = tokenize_search_text(v)
+                    if not normalized_terms:
+                        return None
+                    normalized_col = _normalized_text_expr(col)
+                    for term in normalized_terms:
+                        clauses.append(normalized_col.like(f"%{term}%"))
                 elif op == "startswith":
                     clauses.append(col.startswith(str(v)))
                 elif op == "istartswith":
-                    clauses.append(col.ilike(f"{v}%"))
+                    normalized_value = normalize_search_text(v)
+                    if not normalized_value:
+                        return None
+                    clauses.append(_normalized_text_expr(col).like(f"{normalized_value}%"))
                 elif op == "endswith":
                     clauses.append(col.endswith(str(v)))
                 elif op == "iendswith":
-                    clauses.append(col.ilike(f"%{v}"))
+                    normalized_value = normalize_search_text(v)
+                    if not normalized_value:
+                        return None
+                    clauses.append(_normalized_text_expr(col).like(f"%{normalized_value}"))
         else:
             clauses.append(col == value)
     return clauses

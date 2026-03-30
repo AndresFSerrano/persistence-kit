@@ -288,9 +288,29 @@ async def test_find_by_fields_builds_text_and_logical_query():
         limit=10,
     )
 
-    assert col.last_find["query"]["$or"][0]["name"]["$regex"] == "juan"
+    assert "(?=.*j" in col.last_find["query"]["$or"][0]["name"]["$regex"]
+    assert "[uúùüû]" in col.last_find["query"]["$or"][0]["name"]["$regex"]
     assert col.last_find["query"]["$or"][0]["name"]["$options"] == "i"
     assert col.last_find["query"]["$or"][1]["group"]["$regex"] == "mate"
+
+
+@pytest.mark.asyncio
+async def test_find_by_fields_builds_accent_tolerant_multiterm_regex():
+    col = FakeCollectionForFind([])
+    mapper = FakeMapperForFind()
+
+    await _find_by_fields(
+        col,
+        mapper,
+        {"name": {"icontains": "Andrés / Serrano"}},
+        offset=0,
+        limit=10,
+    )
+
+    regex = col.last_find["query"]["name"]["$regex"]
+    assert "(?=.*" in regex
+    assert "s[eéèëê]rr[aáàäâã][nñ][oóòöôõ]" in regex
+    assert col.last_find["query"]["name"]["$options"] == "i"
 
 
 @pytest.mark.asyncio
