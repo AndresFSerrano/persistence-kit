@@ -7,6 +7,7 @@ from .exceptions import (
     NotFoundException,
     ValidationException,
 )
+from .rate_limit import InMemoryRateLimiter, build_auth_rate_limit_dependency
 from .route_loader import build_api_router
 
 __all__ = [
@@ -20,4 +21,6 @@ __all__ = [
     "handle_service_errors",
     "handle_repository_errors",
     "build_api_router",
+    "InMemoryRateLimiter",
+    "build_auth_rate_limit_dependency",
 ]

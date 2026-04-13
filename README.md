@@ -21,6 +21,8 @@ Author: Andres Felipe Serrano Barrios
 - `api/`: reusable API exceptions, handlers, and route loading helpers
 - `bootstrap/`: startup helpers, configuration registry, and seed orchestration
 - `utils/`: transversal helpers such as upsert utilities
+- `storage/`: reusable object storage contracts and local/S3 adapters
+- `security/`: reusable identity provider contracts, Cognito/memory adapters, and JWT verifiers
 - `repository/`: concrete repository implementations by backend
 - `repository_factory/`: entity registry, repository creation, and populated view repository
 
@@ -34,6 +36,28 @@ Recommended rule:
 ```bash
 pip install persistence-kit
 ```
+
+The base install keeps optional capabilities out of the dependency graph. Enable
+only what the host project uses:
+
+```bash
+pip install "persistence-kit[api]"
+pip install "persistence-kit[security]"
+pip install "persistence-kit[security-cognito]"
+pip install "persistence-kit[storage-s3]"
+pip install "persistence-kit[storage-routes]"
+pip install "persistence-kit[dynamodb]"
+```
+
+Available capabilities:
+
+- `api`: FastAPI exceptions, pagination helpers, route loading, and error handlers.
+- `security`: memory identity provider and JWT verifier.
+- `security-cognito`: security plus Cognito and AWS/JWKS dependencies.
+- `storage-s3`: S3 object storage adapter.
+- `storage-routes`: FastAPI local export download router.
+- `dynamodb`: DynamoDB repository backend.
+- `all`: every optional capability.
 
 ## Quick Start
 
@@ -64,10 +88,25 @@ from persistence_kit import (
     Repository,
     ViewRepository,
     RepoSettings,
+    PersistenceKitSettings,
+    AuthProvider,
+    ExportStorageProvider,
     Database,
     ConfigRegistry,
     configuration,
     SeederProvider,
+    ObjectStorage,
+    LocalObjectStorage,
+    S3ObjectStorage,
+    get_export_storage,
+    build_local_export_storage_router,
+    IdentityProvider,
+    MemorySecurityProvider,
+    CognitoIdentityProvider,
+    MemoryJwtVerifier,
+    CognitoJwtVerifier,
+    get_identity_provider,
+    get_token_verifier,
     build_api_router,
     handle_service_errors,
     handle_repository_errors,
@@ -92,6 +131,93 @@ Use internal paths only for implementation details, for example:
 - `persistence_kit.repository_factory.factory.repository_factory`
 - `persistence_kit.repository_factory.registry.entity_registry`
 - `persistence_kit.repository_factory.view.populating_repository`
+
+## Object Storage
+
+`persistence_kit.storage` provides driven adapters for storing generated files or
+binary objects outside the domain layer:
+
+```python
+from persistence_kit.storage import LocalObjectStorage
+
+storage = LocalObjectStorage(
+    base_dir=".local",
+    public_base_url="http://localhost:8000",
+    signing_secret="dev-secret",
+)
+
+key = await storage.upload("exports/report.csv", b"id,name\n1,Ada\n", "text/csv")
+url = await storage.generate_presigned_url(key)
+```
+
+Available adapters:
+
+- `LocalObjectStorage`: stores files under a configured local directory and signs download URLs.
+- `S3ObjectStorage`: uploads objects to S3 and returns AWS presigned URLs.
+
+Backward-compatible aliases are exported for applications that previously used
+`LocalExportStorageProvider` and `S3ExportStorageProvider`.
+
+`get_export_storage(settings)` builds and caches the configured adapter from a
+`PersistenceKitSettings` instance or a subclass inherited by the host app.
+
+For FastAPI applications, `build_local_export_storage_router(...)` exposes a
+reusable local download route. The host app passes its settings provider,
+optional-current-user dependency, and product authorization callback.
+
+Install `persistence-kit[storage-s3]` before using `S3ObjectStorage` and
+`persistence-kit[storage-routes]` before using the FastAPI export route.
+
+## Security
+
+`persistence_kit.security` provides reusable driven adapters for application
+authentication flows:
+
+```python
+from persistence_kit.security import MemorySecurityProvider, MemoryJwtVerifier
+
+identity = MemorySecurityProvider(
+    jwt_secret="dev-secret-with-enough-length",
+    jwt_issuer="local-sandbox",
+    seed_role_users=True,
+    seed_role_codes=("admin", "operator"),
+    seed_user_domain="example.org",
+)
+verifier = MemoryJwtVerifier(secret="dev-secret-with-enough-length", issuer="local-sandbox")
+```
+
+Available pieces:
+
+- `IdentityProvider` and `TokenVerifier`: application-facing protocols.
+- `MemorySecurityProvider`: local identity provider for tests/sandbox environments.
+- `CognitoIdentityProvider`: AWS Cognito identity provider adapter.
+- `MemoryJwtVerifier` and `CognitoJwtVerifier`: JWT token verifiers.
+- Registration/login/password-reset result dataclasses and helper functions such as `unique_roles`.
+
+Host applications should keep domain-specific roles, authorization policies,
+scope rules, and route permission matrices outside the kit.
+
+Install `persistence-kit[security]` for the memory provider/JWT verifier and
+`persistence-kit[security-cognito]` for Cognito support.
+
+`PersistenceKitSettings` centralizes common auth, storage, observability, AWS,
+and job-service settings. Host applications can inherit from it and override
+only product-specific defaults:
+
+```python
+from persistence_kit import Database, PersistenceKitSettings
+
+
+class Settings(PersistenceKitSettings):
+    service_name: str = "my-api"
+    key_status_history_database: Database = Database.MONGO
+    memory_seed_role_codes: tuple[str, ...] = ("admin", "operator")
+```
+
+`persistence_kit.security.factory` can build the identity provider and token
+verifier from that inherited settings object. `persistence_kit.storage.factory`
+does the same for export storage, and `persistence_kit.storage.routes` exposes
+the reusable FastAPI local export route.
 
 ## Typical Host Application Flow
 
@@ -118,13 +244,13 @@ Create the local environment and run tests from the library root:
 
 ```bash
 poetry lock
-poetry install --with dev
+poetry install --with dev --all-extras
 poetry run pytest -q
 ```
 
 Current validation baseline:
 
-- `persistence_kit`: `138 passed`
+- `persistence_kit`: `335 passed`
 
 ## Publish to PyPI (Manual)
 
