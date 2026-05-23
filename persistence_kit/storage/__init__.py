@@ -10,6 +10,7 @@ from persistence_kit.storage.factory import (
     EXPORT_STORAGE_BUILDERS,
     ExportStorage,
     ExportStorageBuilder,
+    build_media_storage,
     get_export_storage,
 )
 
@@ -23,6 +24,7 @@ _ROUTE_EXPORTS = {
     "guess_export_media_type",
 }
 _S3_EXPORTS = {"S3ObjectStorage", "S3ExportStorageProvider"}
+_MEDIA_EXPORTS = {"MediaStorage"}
 
 __all__ = [
     "ObjectStorage",
@@ -39,6 +41,8 @@ __all__ = [
     "ExportStorageBuilder",
     "EXPORT_STORAGE_BUILDERS",
     "get_export_storage",
+    "MediaStorage",
+    "build_media_storage",
     "SettingsProvider",
     "CurrentUserDependency",
     "ExportDownloadAuthorizer",
@@ -65,6 +69,12 @@ def __getattr__(name: str):
         from persistence_kit.storage import s3
 
         value = getattr(s3, name)
+        globals()[name] = value
+        return value
+    if name in _MEDIA_EXPORTS:
+        from persistence_kit.storage import media
+
+        value = getattr(media, name)
         globals()[name] = value
         return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from persistence_kit.storage.errors import (
     StorageConfigError,
+    StorageError,
     StoragePresignError,
     StorageUploadError,
 )
@@ -90,6 +91,35 @@ class S3ObjectStorage:
         except ClientError as exc:
             logger.exception("S3 presign fallido bucket=%s key=%s", self._bucket, key)
             raise StoragePresignError(f"No fue posible generar la URL prefirmada: {exc}") from exc
+
+    async def delete(self, key: str) -> None:
+        def _delete() -> None:
+            self._client.delete_object(Bucket=self._bucket, Key=key)
+
+        try:
+            await asyncio.to_thread(_delete)
+        except ClientError as exc:
+            logger.exception("S3 delete fallido bucket=%s key=%s", self._bucket, key)
+            raise StorageError(f"No fue posible borrar el objeto en S3: {exc}") from exc
+
+    async def list_keys(self, prefix: str = "") -> list[str]:
+        normalized_prefix = prefix.lstrip("/")
+        if normalized_prefix and not normalized_prefix.endswith("/"):
+            normalized_prefix = normalized_prefix + "/"
+
+        def _list() -> list[str]:
+            keys: list[str] = []
+            paginator = self._client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self._bucket, Prefix=normalized_prefix):
+                for obj in page.get("Contents", []) or []:
+                    keys.append(obj["Key"])
+            return keys
+
+        try:
+            return await asyncio.to_thread(_list)
+        except ClientError as exc:
+            logger.exception("S3 list fallido bucket=%s prefix=%s", self._bucket, normalized_prefix)
+            raise StorageError(f"No fue posible listar objetos en S3: {exc}") from exc
 
 
 S3ExportStorageProvider = S3ObjectStorage
