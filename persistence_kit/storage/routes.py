@@ -6,13 +6,15 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from starlette import status
+from starlette.responses import Response
 
 from persistence_kit.settings import PersistenceKitSettings
 from persistence_kit.storage.errors import StorageConfigError
 from persistence_kit.storage.factory import get_export_storage
-from persistence_kit.storage.local import LocalExportStorageProvider
+from persistence_kit.storage.local import LocalExportStorageProvider, LocalObjectStorage
+from persistence_kit.storage.media import MediaStorage
 
 SettingsProvider = Callable[[], PersistenceKitSettings]
 CurrentUserDependency = Callable[..., Any]
@@ -117,3 +119,25 @@ def _get_local_export_storage(
 
 def _anonymous_current_user() -> None:
     return None
+
+
+async def serve_media_object(
+    storage: MediaStorage,
+    key: str,
+    *,
+    media_type: str | None = None,
+) -> Response:
+    backend = storage.object_storage
+    if isinstance(backend, LocalObjectStorage):
+        file_path = backend.get_file_path(key)
+        if not file_path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Archivo no encontrado.",
+            )
+        return FileResponse(
+            path=file_path,
+            media_type=media_type or "application/octet-stream",
+        )
+    presigned_url = await storage.generate_presigned_url(key)
+    return RedirectResponse(url=presigned_url)

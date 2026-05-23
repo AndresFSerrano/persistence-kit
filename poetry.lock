@@ -19,7 +19,7 @@ description = "High-level concurrency and networking framework on top of asyncio
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"api\" or extra == \"storage-routes\" or extra == \"security\" or extra == \"security-cognito\" or extra == \"all\""
+markers = "extra == \"api\" or extra == \"storage-routes\" or extra == \"security\" or extra == \"security-cognito\" or extra == \"testing\" or extra == \"all\""
 files = [
     {file = "anyio-4.12.1-py3-none-any.whl", hash = "sha256:d405828884fc140aa80a3c667b8beed277f1dfedec42ba031bd6ac3db606ab6c"},
     {file = "anyio-4.12.1.tar.gz", hash = "sha256:41cfcc3a4c85d3f05c932da7c26d0201ac36f72abd4435ba90d0464a3ffed703"},
@@ -145,7 +145,7 @@ description = "Foreign Function Interface for Python calling C code."
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "platform_python_implementation != \"PyPy\" and (extra == \"security\" or extra == \"security-cognito\" or extra == \"all\")"
+markers = "platform_python_implementation != \"PyPy\" and (extra == \"security\" or extra == \"security-cognito\" or extra == \"testing\" or extra == \"all\")"
 files = [
     {file = "cffi-2.0.0-cp310-cp310-macosx_10_13_x86_64.whl", hash = "sha256:0cf2d91ecc3fcc0625c2c530fe004f82c110405f101548512cce44322fa8ac44"},
     {file = "cffi-2.0.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:f73b96c41e3b2adedc34a7356e64c8eb96e03a3782b535e043a986276ce12a49"},
@@ -256,7 +256,7 @@ description = "cryptography is a package which provides cryptographic recipes an
 optional = true
 python-versions = "!=3.9.0,!=3.9.1,>=3.8"
 groups = ["main"]
-markers = "extra == \"security\" or extra == \"security-cognito\" or extra == \"all\""
+markers = "extra == \"security\" or extra == \"security-cognito\" or extra == \"testing\" or extra == \"all\""
 files = [
     {file = "cryptography-46.0.7-cp311-abi3-macosx_10_9_universal2.whl", hash = "sha256:ea42cbe97209df307fdc3b155f1b6fa2577c0defa8f1f7d3be7d31d189108ad4"},
     {file = "cryptography-46.0.7-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:b36a4695e29fe69215d75960b22577197aca3f7a25b9cf9d165dcfe9d80bc325"},
@@ -350,7 +350,7 @@ description = "FastAPI framework, high performance, easy to learn, fast to code,
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"api\" or extra == \"storage-routes\" or extra == \"security\" or extra == \"security-cognito\" or extra == \"all\""
+markers = "extra == \"api\" or extra == \"storage-routes\" or extra == \"security\" or extra == \"security-cognito\" or extra == \"testing\" or extra == \"all\""
 files = [
     {file = "fastapi-0.115.14-py3-none-any.whl", hash = "sha256:6c0c8bf9420bd58f565e585036d971872472b4f7d3f6c73b698e10cffdefb3ca"},
     {file = "fastapi-0.115.14.tar.gz", hash = "sha256:b1de15cdc1c499a4da47914db35d0e4ef8f1ce62b624e94e0e5824421df99739"},
@@ -440,7 +440,7 @@ description = "Internationalized Domain Names in Applications (IDNA)"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"api\" or extra == \"storage-routes\" or extra == \"security\" or extra == \"security-cognito\" or extra == \"all\""
+markers = "extra == \"api\" or extra == \"storage-routes\" or extra == \"security\" or extra == \"security-cognito\" or extra == \"testing\" or extra == \"all\""
 files = [
     {file = "idna-3.11-py3-none-any.whl", hash = "sha256:771a87f49d9defaf64091e6e6fe9c18d4833f140bd19464795bc32d966ca37ea"},
     {file = "idna-3.11.tar.gz", hash = "sha256:795dafcc9c04ed0c1fb032c2aa73654d8e8c5023a7df64a53f39190ada629902"},
@@ -534,7 +534,7 @@ description = "C parser in Python"
 optional = true
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "platform_python_implementation != \"PyPy\" and (extra == \"security\" or extra == \"security-cognito\" or extra == \"all\") and implementation_name != \"PyPy\""
+markers = "platform_python_implementation != \"PyPy\" and (extra == \"security\" or extra == \"security-cognito\" or extra == \"testing\" or extra == \"all\") and implementation_name != \"PyPy\""
 files = [
     {file = "pycparser-3.0-py3-none-any.whl", hash = "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"},
     {file = "pycparser-3.0.tar.gz", hash = "sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29"},
@@ -742,7 +742,7 @@ description = "JSON Web Token implementation in Python"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"security\" or extra == \"security-cognito\" or extra == \"all\""
+markers = "extra == \"security\" or extra == \"security-cognito\" or extra == \"testing\" or extra == \"all\""
 files = [
     {file = "pyjwt-2.12.1-py3-none-any.whl", hash = "sha256:28ca37c070cad8ba8cd9790cd940535d40274d22f80ab87f3ac6a713e6e8454c"},
     {file = "pyjwt-2.12.1.tar.gz", hash = "sha256:c74a7a2adf861c04d002db713dd85f84beb242228e671280bf709d765b03672b"},
@@ -924,6 +924,19 @@ files = [
 cli = ["click (>=5.0)"]
 
 [[package]]
+name = "python-multipart"
+version = "0.0.20"
+description = "A streaming multipart parser for Python"
+optional = true
+python-versions = ">=3.8"
+groups = ["main"]
+markers = "extra == \"api\" or extra == \"storage-routes\" or extra == \"security\" or extra == \"security-cognito\" or extra == \"testing\" or extra == \"all\""
+files = [
+    {file = "python_multipart-0.0.20-py3-none-any.whl", hash = "sha256:8a62d3a8335e06589fe01f2a3e178cdcc632f3fbe0d492ad9ee0ec35aab1f104"},
+    {file = "python_multipart-0.0.20.tar.gz", hash = "sha256:8dd0cab45b8e23064ae09147625994d090fa46f5b0d1e13af944c331a7fa9d13"},
+]
+
+[[package]]
 name = "s3transfer"
 version = "0.16.0"
 description = "An Amazon S3 Transfer Manager"
@@ -1064,7 +1077,7 @@ description = "The little ASGI library that shines."
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "extra == \"api\" or extra == \"storage-routes\" or extra == \"security\" or extra == \"security-cognito\" or extra == \"all\""
+markers = "extra == \"api\" or extra == \"storage-routes\" or extra == \"security\" or extra == \"security-cognito\" or extra == \"testing\" or extra == \"all\""
 files = [
     {file = "starlette-0.46.2-py3-none-any.whl", hash = "sha256:595633ce89f8ffa71a015caed34a5b2dc1c0cdb3f0f1fbd1e69339cf2abeec35"},
     {file = "starlette-0.46.2.tar.gz", hash = "sha256:7f7361f34eed179294600af672f565727419830b54b7b084efe44bb82d2fccd5"},
@@ -1123,15 +1136,16 @@ socks = ["pysocks (>=1.5.6,!=1.5.7,<2.0)"]
 zstd = ["backports-zstd (>=1.0.0) ; python_version < \"3.14\""]
 
 [extras]
-all = ["boto3", "fastapi", "pyjwt"]
-api = ["fastapi"]
+all = ["boto3", "fastapi", "pyjwt", "python-multipart"]
+api = ["fastapi", "python-multipart"]
 dynamodb = ["boto3"]
-security = ["fastapi", "pyjwt"]
-security-cognito = ["boto3", "fastapi", "pyjwt"]
-storage-routes = ["fastapi"]
+security = ["fastapi", "pyjwt", "python-multipart"]
+security-cognito = ["boto3", "fastapi", "pyjwt", "python-multipart"]
+storage-routes = ["fastapi", "python-multipart"]
 storage-s3 = ["boto3"]
+testing = ["fastapi", "pyjwt", "python-multipart"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<4.0"
-content-hash = "66da9cb03cc4728951eaef413da4c7855653f990d5d564f4dd77c07155487db3"
+content-hash = "e2b5bce06ca51bd9710fdc6d8153b8c7609b29410699234412228f4be20ec91e"
