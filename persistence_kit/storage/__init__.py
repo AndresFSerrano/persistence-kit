@@ -21,6 +21,7 @@ _ROUTE_EXPORTS = {
     "ExportDownloadAuthorizer",
     "build_local_export_storage_router",
     "serve_local_export",
+    "serve_media_object",
     "guess_export_media_type",
 }
 _S3_EXPORTS = {"S3ObjectStorage", "S3ExportStorageProvider"}
@@ -48,6 +49,7 @@ __all__ = [
     "ExportDownloadAuthorizer",
     "build_local_export_storage_router",
     "serve_local_export",
+    "serve_media_object",
     "guess_export_media_type",
 ]
 

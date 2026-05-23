@@ -45,6 +45,10 @@ class MediaStorage:
         return self._url_prefix
 
     @property
+    def object_storage(self) -> ObjectStorage:
+        return self._storage
+
+    @property
     def allowed_content_types(self) -> tuple[str, ...]:
         return self._allowed_content_types
 
