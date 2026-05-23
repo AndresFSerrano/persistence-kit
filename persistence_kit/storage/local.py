@@ -91,6 +91,40 @@ class LocalObjectStorage:
         ).digest()
         return f"{payload_token}.{_b64encode(signature)}"
 
+    async def delete(self, key: str) -> None:
+        destination = self.get_file_path(key)
+
+        def _delete() -> None:
+            if destination.is_file():
+                destination.unlink()
+            current = destination.parent
+            while current != self._base_dir and current.is_relative_to(self._base_dir):
+                try:
+                    if not current.is_dir() or any(current.iterdir()):
+                        break
+                    current.rmdir()
+                except OSError:
+                    break
+                current = current.parent
+
+        await asyncio.to_thread(_delete)
+
+    async def list_keys(self, prefix: str = "") -> list[str]:
+        normalized_prefix = prefix.strip("/").rstrip("/")
+        root = self._base_dir / normalized_prefix if normalized_prefix else self._base_dir
+
+        def _list() -> list[str]:
+            if not root.is_dir():
+                return []
+            collected: list[str] = []
+            for path in root.rglob("*"):
+                if path.is_file():
+                    rel = path.relative_to(self._base_dir).as_posix()
+                    collected.append(rel)
+            return collected
+
+        return await asyncio.to_thread(_list)
+
     def validate_download_token(self, key: str, token: str) -> bool:
         try:
             payload_token, signature_token = token.split(".", maxsplit=1)

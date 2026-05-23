@@ -17,6 +17,11 @@ class ExportStorageProvider(str, Enum):
     S3 = "s3"
 
 
+class MediaStorageProvider(str, Enum):
+    LOCAL = "local"
+    S3 = "s3"
+
+
 class DeploymentStage(str, Enum):
     LOCAL = "local"
     DEV = "dev"
@@ -52,6 +57,11 @@ class PersistenceKitSettings(RepoSettings):
     export_storage_provider: ExportStorageProvider = ExportStorageProvider.LOCAL
     local_export_storage_dir: str = ".local"
     local_export_url_secret: str = "local-export-dev-secret-key-32-bytes"
+
+    # Media Storage (user-uploaded assets like product images, avatars, etc.)
+    media_storage_provider: MediaStorageProvider = MediaStorageProvider.LOCAL
+    local_media_storage_dir: str = ".local/media"
+    aws_s3_media_bucket: str | None = None
 
     # Cognito
     cognito_user_pool_id: str | None = None

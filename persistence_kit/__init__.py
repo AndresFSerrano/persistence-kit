@@ -13,6 +13,7 @@ from .settings import (
     AuthProvider,
     DeploymentStage,
     ExportStorageProvider,
+    MediaStorageProvider,
     PersistenceKitSettings,
 )
 from .settings.constants import Database
@@ -186,6 +187,7 @@ __all__ = [
     "RepoSettings",
     "AuthProvider",
     "ExportStorageProvider",
+    "MediaStorageProvider",
     "DeploymentStage",
     "LOCAL_DEFAULT_JOB_SERVICE_API_KEY",
     "DEFAULT_MEMORY_JWT_SECRET",

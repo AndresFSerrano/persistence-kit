@@ -7,6 +7,7 @@ from persistence_kit.storage import (
     LocalObjectStorage,
     S3ObjectStorage,
     StorageConfigError,
+    StorageError,
     StoragePresignError,
     StorageUploadError,
 )
@@ -22,9 +23,14 @@ class FakeS3Client:
         self.put_calls: list[dict] = []
         self.upload_fileobj_calls: list[dict] = []
         self.presign_calls: list[dict] = []
+        self.delete_calls: list[dict] = []
+        self.paginate_calls: list[dict] = []
         self.put_error: Exception | None = None
         self.upload_fileobj_error: Exception | None = None
         self.presign_error: Exception | None = None
+        self.delete_error: Exception | None = None
+        self.list_error: Exception | None = None
+        self.list_pages: list[list[dict]] = []
 
     def put_object(self, **kwargs) -> None:
         self.put_calls.append(kwargs)
@@ -55,6 +61,24 @@ class FakeS3Client:
         if self.presign_error is not None:
             raise self.presign_error
         return "https://example.com/presigned"
+
+    def delete_object(self, **kwargs) -> None:
+        self.delete_calls.append(kwargs)
+        if self.delete_error is not None:
+            raise self.delete_error
+
+    def get_paginator(self, name: str):
+        client = self
+
+        class _Paginator:
+            def paginate(self, **kwargs):
+                client.paginate_calls.append({"name": name, **kwargs})
+                if client.list_error is not None:
+                    raise client.list_error
+                for page in client.list_pages or [[]]:
+                    yield {"Contents": page}
+
+        return _Paginator()
 
 
 @pytest.fixture
@@ -176,3 +200,108 @@ async def test_s3_storage_presign_errors_are_domain_errors(fake_s3_client: FakeS
 
     with pytest.raises(StoragePresignError):
         await storage.generate_presigned_url("reports/file.xlsx")
+
+
+@pytest.mark.asyncio
+async def test_local_storage_delete_removes_file_and_empty_parent(tmp_path: Path):
+    storage = LocalObjectStorage(
+        base_dir=str(tmp_path),
+        public_base_url="http://localhost:8000",
+        signing_secret="test-secret",
+    )
+    await storage.upload("scope-a/file.txt", b"hello", "text/plain")
+    assert (tmp_path / "scope-a" / "file.txt").is_file()
+
+    await storage.delete("scope-a/file.txt")
+
+    assert not (tmp_path / "scope-a" / "file.txt").exists()
+    assert not (tmp_path / "scope-a").exists()
+
+
+@pytest.mark.asyncio
+async def test_local_storage_delete_is_noop_on_missing_key(tmp_path: Path):
+    storage = LocalObjectStorage(
+        base_dir=str(tmp_path),
+        public_base_url="http://localhost:8000",
+        signing_secret="test-secret",
+    )
+
+    await storage.delete("never/existed.txt")
+
+
+@pytest.mark.asyncio
+async def test_local_storage_list_keys_returns_all_under_prefix(tmp_path: Path):
+    storage = LocalObjectStorage(
+        base_dir=str(tmp_path),
+        public_base_url="http://localhost:8000",
+        signing_secret="test-secret",
+    )
+    await storage.upload("scope-a/one.txt", b"1", "text/plain")
+    await storage.upload("scope-a/nested/two.txt", b"2", "text/plain")
+    await storage.upload("scope-b/three.txt", b"3", "text/plain")
+
+    scope_a = await storage.list_keys(prefix="scope-a")
+    scope_b = await storage.list_keys(prefix="scope-b")
+    everything = await storage.list_keys()
+
+    assert sorted(scope_a) == ["scope-a/nested/two.txt", "scope-a/one.txt"]
+    assert scope_b == ["scope-b/three.txt"]
+    assert sorted(everything) == [
+        "scope-a/nested/two.txt",
+        "scope-a/one.txt",
+        "scope-b/three.txt",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_storage_list_keys_empty_for_unknown_prefix(tmp_path: Path):
+    storage = LocalObjectStorage(
+        base_dir=str(tmp_path),
+        public_base_url="http://localhost:8000",
+        signing_secret="test-secret",
+    )
+
+    assert await storage.list_keys(prefix="missing") == []
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_delete_calls_client(fake_s3_client: FakeS3Client):
+    storage = S3ObjectStorage(bucket="media", region="us-east-1")
+
+    await storage.delete("scope/file.png")
+
+    assert fake_s3_client.delete_calls == [{"Bucket": "media", "Key": "scope/file.png"}]
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_delete_wraps_client_error(fake_s3_client: FakeS3Client):
+    fake_s3_client.delete_error = FakeClientError("boom")
+    storage = S3ObjectStorage(bucket="media", region="us-east-1")
+
+    with pytest.raises(StorageError):
+        await storage.delete("scope/file.png")
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_list_keys_paginates_with_prefix(fake_s3_client: FakeS3Client):
+    fake_s3_client.list_pages = [
+        [{"Key": "scope/a.png"}, {"Key": "scope/b.png"}],
+        [{"Key": "scope/c.png"}],
+    ]
+    storage = S3ObjectStorage(bucket="media", region="us-east-1")
+
+    keys = await storage.list_keys(prefix="scope")
+
+    assert keys == ["scope/a.png", "scope/b.png", "scope/c.png"]
+    assert fake_s3_client.paginate_calls == [
+        {"name": "list_objects_v2", "Bucket": "media", "Prefix": "scope/"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_list_keys_wraps_client_error(fake_s3_client: FakeS3Client):
+    fake_s3_client.list_error = FakeClientError("boom")
+    storage = S3ObjectStorage(bucket="media", region="us-east-1")
+
+    with pytest.raises(StorageError):
+        await storage.list_keys(prefix="scope")
