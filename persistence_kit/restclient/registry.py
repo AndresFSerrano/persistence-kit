@@ -103,6 +103,10 @@ class RestClientRegistry:
     def names(self) -> tuple[str, ...]:
         return tuple(self._services)
 
+    def clear(self) -> None:
+        self._services.clear()
+        self._clients.clear()
+
     async def aclose_all(self) -> None:
         for client in self._clients.values():
             await client.aclose()

@@ -218,6 +218,26 @@ _OPTIONAL_EXPORTS = {
     ),
     "decode": ("persistence_kit.restclient.mapping", "decode", "restclient"),
     "encode": ("persistence_kit.restclient.mapping", "encode", "restclient"),
+    "register_rest_service": (
+        "persistence_kit.restclient.provider",
+        "register_rest_service",
+        "restclient",
+    ),
+    "set_rest_registry_initializer": (
+        "persistence_kit.restclient.provider",
+        "set_rest_registry_initializer",
+        "restclient",
+    ),
+    "provide_rest_client": (
+        "persistence_kit.restclient.provider",
+        "provide_rest_client",
+        "restclient",
+    ),
+    "get_rest_client": (
+        "persistence_kit.restclient.provider",
+        "get_rest_client",
+        "restclient",
+    ),
     "NoAuth": ("persistence_kit.restclient.auth", "NoAuth", "restclient"),
     "ApiKeyAuth": ("persistence_kit.restclient.auth", "ApiKeyAuth", "restclient"),
     "BearerAuth": ("persistence_kit.restclient.auth", "BearerAuth", "restclient"),

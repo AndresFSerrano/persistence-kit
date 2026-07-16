@@ -44,6 +44,14 @@ from persistence_kit.restclient.populate import (
     populate,
 )
 from persistence_kit.restclient.payload import serialize_xml
+from persistence_kit.restclient.provider import (
+    default_rest_registry,
+    get_rest_client,
+    provide_rest_client,
+    register_rest_service,
+    reset_rest_registry,
+    set_rest_registry_initializer,
+)
 from persistence_kit.restclient.registry import RegisteredService, RestClientRegistry
 from persistence_kit.restclient.resolver import (
     DirectoryEndpointResolver,
@@ -85,6 +93,12 @@ __all__ = [
     "RestClientRegistry",
     "RegisteredService",
     "build_rest_client",
+    "register_rest_service",
+    "set_rest_registry_initializer",
+    "provide_rest_client",
+    "get_rest_client",
+    "default_rest_registry",
+    "reset_rest_registry",
     "RestClientError",
     "RestConfigError",
     "RestAuthError",
