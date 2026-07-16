@@ -32,6 +32,7 @@ from .storage import (
     get_export_storage,
 )
 from .authenticated_user import AuthenticatedUser
+from .resilience import CircuitBreaker, CircuitOpenError, CircuitState
 from .utils.upsert import dataclass_field_names, upsert_entity
 
 _OPTIONAL_EXPORTS = {
@@ -175,6 +176,83 @@ _OPTIONAL_EXPORTS = {
         "guess_export_media_type",
         "storage-routes",
     ),
+    "build_rest_client": (
+        "persistence_kit.restclient.factory",
+        "build_rest_client",
+        "restclient",
+    ),
+    "RestClientRegistry": (
+        "persistence_kit.restclient.registry",
+        "RestClientRegistry",
+        "restclient",
+    ),
+    "HttpxRestClient": (
+        "persistence_kit.restclient.client",
+        "HttpxRestClient",
+        "restclient",
+    ),
+    "MemoryRestClient": (
+        "persistence_kit.restclient.memory",
+        "MemoryRestClient",
+        "restclient",
+    ),
+    "ServiceConfig": (
+        "persistence_kit.restclient.config",
+        "ServiceConfig",
+        "restclient",
+    ),
+    "RetryPolicy": (
+        "persistence_kit.restclient.retry",
+        "RetryPolicy",
+        "restclient",
+    ),
+    "StaticEndpointResolver": (
+        "persistence_kit.restclient.resolver",
+        "StaticEndpointResolver",
+        "restclient",
+    ),
+    "DirectoryEndpointResolver": (
+        "persistence_kit.restclient.resolver",
+        "DirectoryEndpointResolver",
+        "restclient",
+    ),
+    "decode": ("persistence_kit.restclient.mapping", "decode", "restclient"),
+    "encode": ("persistence_kit.restclient.mapping", "encode", "restclient"),
+    "NoAuth": ("persistence_kit.restclient.auth", "NoAuth", "restclient"),
+    "ApiKeyAuth": ("persistence_kit.restclient.auth", "ApiKeyAuth", "restclient"),
+    "BearerAuth": ("persistence_kit.restclient.auth", "BearerAuth", "restclient"),
+    "BasicAuth": ("persistence_kit.restclient.auth", "BasicAuth", "restclient"),
+    "OAuth2ClientCredentials": (
+        "persistence_kit.restclient.auth",
+        "OAuth2ClientCredentials",
+        "restclient",
+    ),
+    "LoginTokenAuth": (
+        "persistence_kit.restclient.auth",
+        "LoginTokenAuth",
+        "restclient",
+    ),
+    "RestClient": ("persistence_kit.restclient.contracts", "RestClient", "restclient"),
+    "Authenticator": (
+        "persistence_kit.restclient.contracts",
+        "Authenticator",
+        "restclient",
+    ),
+    "EndpointResolver": (
+        "persistence_kit.restclient.contracts",
+        "EndpointResolver",
+        "restclient",
+    ),
+    "RestClientError": (
+        "persistence_kit.restclient.errors",
+        "RestClientError",
+        "restclient",
+    ),
+    "RestHTTPError": (
+        "persistence_kit.restclient.errors",
+        "RestHTTPError",
+        "restclient",
+    ),
 }
 
 __all__ = [
@@ -200,6 +278,9 @@ __all__ = [
     "is_duplicate_startup_error",
     "run_startup_bootstrap",
     "AuthenticatedUser",
+    "CircuitBreaker",
+    "CircuitState",
+    "CircuitOpenError",
     "dataclass_field_names",
     "upsert_entity",
     "ObjectStorage",
