@@ -4,7 +4,7 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import SettingsConfigDict
 
 from persistence_kit.settings.repo_settings import RepoSettings
-from persistence_kit.settings.parsers import split_csv_list
+from persistence_kit.settings.parsers import parse_str_map, split_csv_list
 
 
 class AuthProvider(str, Enum):
@@ -92,6 +92,13 @@ class PersistenceKitSettings(RepoSettings):
     aws_region: str = "us-east-1"
     aws_s3_export_bucket: str | None = None
 
+    # REST client (outbound)
+    rest_default_timeout_seconds: float = 10.0
+    rest_default_max_retries: int = 2
+    rest_default_verify_tls: bool = True
+    rest_default_user_agent: str | None = None
+    rest_service_urls: dict[str, str] = {}
+
     model_config = SettingsConfigDict(extra="ignore")
 
     @property
@@ -123,3 +130,7 @@ class PersistenceKitSettings(RepoSettings):
         if isinstance(value, str):
             return tuple(split_csv_list(value) or ())
         return value
+
+    @field_validator("rest_service_urls", mode="before")
+    def parse_rest_service_urls(cls, value):
+        return parse_str_map(value)
