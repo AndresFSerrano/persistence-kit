@@ -72,6 +72,7 @@ class HttpxRestClient(ModelMappingMixin):
         content_type: str | None = None,
         soap_action: str | None = None,
         headers: Mapping[str, str] | None = None,
+        cache_ttl: float | None = None,
     ) -> RestResponse:
         url = await self._resolver.resolve(service)
         request = prepare_request(

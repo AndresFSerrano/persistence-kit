@@ -94,6 +94,7 @@ class RestClient(Protocol):
         content_type: str | None = None,
         soap_action: str | None = None,
         headers: Mapping[str, str] | None = None,
+        cache_ttl: float | None = None,
     ) -> RestResponse: ...
 
     async def aclose(self) -> None: ...

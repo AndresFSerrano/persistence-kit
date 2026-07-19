@@ -82,6 +82,7 @@ class MemoryRestClient(ModelMappingMixin):
         content_type: str | None = None,
         soap_action: str | None = None,
         headers: Mapping[str, str] | None = None,
+        cache_ttl: float | None = None,
     ) -> RestResponse:
         url = await self._resolver.resolve(service) if self._resolver else service
         request = prepare_request(

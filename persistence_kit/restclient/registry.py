@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from persistence_kit.resilience import CircuitBreaker
 from persistence_kit.restclient.auth.base import NoAuth
@@ -24,6 +24,7 @@ class RegisteredService:
     authenticator: Authenticator
     retry_policy: RetryPolicy | None = None
     circuit_breaker: CircuitBreaker | None = None
+    on_cache_change: Callable[[str], None] | None = None
 
 
 class RestClientRegistry:
@@ -59,6 +60,7 @@ class RestClientRegistry:
         config: ServiceConfig | None = None,
         retry_policy: RetryPolicy | None = None,
         circuit_breaker: CircuitBreaker | None = None,
+        on_cache_change: Callable[[str], None] | None = None,
         replace: bool = False,
     ) -> "RestClientRegistry":
         if name in self._services and not replace:
@@ -70,6 +72,7 @@ class RestClientRegistry:
             authenticator=authenticator or NoAuth(),
             retry_policy=retry_policy,
             circuit_breaker=circuit_breaker,
+            on_cache_change=on_cache_change,
         )
         self._clients.pop(name, None)
         return self
@@ -90,13 +93,27 @@ class RestClientRegistry:
                 "Instala con `persistence-kit[restclient]`."
             ) from exc
 
-        client = HttpxRestClient(
+        client: RestClient = HttpxRestClient(
             config=service.config,
             resolver=service.resolver,
             authenticator=service.authenticator,
             retry_policy=service.retry_policy,
             circuit_breaker=service.circuit_breaker,
         )
+
+        if service.config.cache_ttl_seconds or service.config.cacheable:
+            from persistence_kit.cache.factory import get_cache
+            from persistence_kit.restclient.caching import CachingRestClient
+
+            client = CachingRestClient(
+                client,
+                get_cache("restclient"),
+                default_ttl_seconds=service.config.cache_ttl_seconds,
+                default_swr_seconds=service.config.cache_stale_while_revalidate_seconds,
+                name=name,
+                on_change=service.on_cache_change,
+            )
+
         self._clients[name] = client
         return client
 

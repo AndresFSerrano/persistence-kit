@@ -58,8 +58,10 @@ from persistence_kit.restclient.resolver import (
     StaticEndpointResolver,
 )
 from persistence_kit.restclient.retry import RetryPolicy
+from persistence_kit.restclient.caching import CachingRestClient
 
 __all__ = [
+    "CachingRestClient",
     "RestClient",
     "RestRequest",
     "RestResponse",
