@@ -46,6 +46,7 @@ def register_rest_service(
     config: ServiceConfig | None = None,
     retry_policy: RetryPolicy | None = None,
     circuit_breaker: CircuitBreaker | None = None,
+    on_cache_change: Callable[[str], None] | None = None,
     replace: bool = False,
 ) -> None:
     default_rest_registry().register(
@@ -56,6 +57,7 @@ def register_rest_service(
         config=config,
         retry_policy=retry_policy,
         circuit_breaker=circuit_breaker,
+        on_cache_change=on_cache_change,
         replace=replace,
     )
 

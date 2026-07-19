@@ -15,6 +15,9 @@ class ServiceConfig(BaseModel):
     raise_for_status: bool = True
     default_headers: dict[str, str] = Field(default_factory=dict)
     user_agent: str | None = None
+    cacheable: bool = False
+    cache_ttl_seconds: float | None = None
+    cache_stale_while_revalidate_seconds: float = 0.0
 
     @classmethod
     def from_settings(cls, settings: Any, **overrides: Any) -> "ServiceConfig":

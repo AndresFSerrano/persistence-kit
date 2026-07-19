@@ -25,6 +25,11 @@ Author: Andres Felipe Serrano Barrios
 - `security/`: reusable identity provider contracts, Cognito/memory adapters, and JWT verifiers
 - `repository/`: concrete repository implementations by backend
 - `repository_factory/`: entity registry, repository creation, and populated view repository
+- `resilience/`: retry policy and circuit breaker shared across the kit
+- `restclient/`: generic REST/HTTP client (transport, pluggable auth, endpoint resolvers, DTO mapper) with optional response caching
+- `cache/`: generic key-value cache with TTL (in-memory, Mongo, DynamoDB), selected by `CACHE_BACKEND`
+
+See `docs/restclient_and_cache.md` for the REST client and cache.
 
 Recommended rule:
 
@@ -122,6 +127,22 @@ from persistence_kit.repository_factory import (
     provide_repo,
     provide_view_repo,
     set_registry_initializer,
+)
+from persistence_kit.restclient import (
+    RestClient,
+    ServiceConfig,
+    register_rest_service,
+    get_rest_client,
+    provide_rest_client,
+    set_rest_registry_initializer,
+    decode,
+)
+from persistence_kit.cache import (
+    Cache,
+    InMemoryTTLCache,
+    get_cache,
+    CacheBackend,
+    CacheSettings,
 )
 ```
 
@@ -229,7 +250,10 @@ the reusable FastAPI local export route.
 
 ## Supported Environment Variables
 
-- `REPO_DATABASE=memory|mongo|postgres`
+- `REPO_DATABASE=memory|mongo|postgres|dynamodb`
+- `CACHE_BACKEND=memory|mongo|dynamodb` (default `memory`; backend for `get_cache` / the REST client cache)
+- `CACHE_NAMESPACE` (optional key prefix; isolates apps that share one cache, e.g. a common DynamoDB table)
+- `REST_SERVICE_URLS` (JSON map `{"service": "base_url"}` to override registered REST base URLs)
 - `MONGO_DSN`
 - `MONGO_DB`
 - `POSTGRES_USER`
@@ -237,6 +261,8 @@ the reusable FastAPI local export route.
 - `POSTGRES_HOST`
 - `POSTGRES_PORT`
 - `POSTGRES_DB`
+- `DYNAMODB_REGION`
+- `DYNAMODB_TABLE_PREFIX`
 
 ## Local Development
 
