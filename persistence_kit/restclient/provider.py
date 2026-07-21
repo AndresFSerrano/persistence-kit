@@ -62,6 +62,16 @@ def register_rest_service(
     )
 
 
+def register_rest_client(name: str, client: RestClient) -> None:
+    """Registra un cliente ya construido bajo un nombre.
+
+    Pensado para inyectar stubs o dobles de prueba: el consumidor sigue pidiendo
+    el servicio por nombre con :func:`provide_rest_client`, pero recibe este
+    cliente en vez de uno HTTP.
+    """
+    default_rest_registry().set_client(name, client)
+
+
 def get_rest_client(name: str) -> RestClient:
     _init_registry()
     return default_rest_registry().get(name)
