@@ -1,9 +1,11 @@
 import pytest
 
 from persistence_kit.restclient import (
+    MemoryRestClient,
     default_rest_registry,
     get_rest_client,
     provide_rest_client,
+    register_rest_client,
     register_rest_service,
     reset_rest_registry,
     set_rest_registry_initializer,
@@ -37,6 +39,25 @@ def test_env_map_overrides_registered_base_url(monkeypatch):
     register_rest_service("geo", base_url="https://api.test")
 
     assert default_rest_registry()._services["geo"].resolver.base_url == "https://mirror.test"
+
+
+def test_register_rest_client_returns_injected_stub():
+    stub = MemoryRestClient()
+
+    def init():
+        register_rest_client("geo", stub)
+
+    set_rest_registry_initializer(init)
+
+    assert provide_rest_client("geo")() is stub
+
+
+def test_register_rest_client_wins_over_registered_service():
+    stub = MemoryRestClient()
+    register_rest_service("geo", base_url="https://api.test")
+    register_rest_client("geo", stub)
+
+    assert get_rest_client("geo") is stub
 
 
 def test_initializer_runs_only_once():

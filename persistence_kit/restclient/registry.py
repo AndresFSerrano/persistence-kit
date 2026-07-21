@@ -77,6 +77,15 @@ class RestClientRegistry:
         self._clients.pop(name, None)
         return self
 
+    def set_client(self, name: str, client: RestClient) -> "RestClientRegistry":
+        """Registra un cliente ya construido bajo un nombre.
+
+        Inyecta dobles de prueba o stubs sin pasar por el transporte HTTP: ``get``
+        devuelve este cliente tal cual, sin construir un ``HttpxRestClient``.
+        """
+        self._clients[name] = client
+        return self
+
     def get(self, name: str) -> RestClient:
         cached = self._clients.get(name)
         if cached is not None:
