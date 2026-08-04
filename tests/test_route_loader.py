@@ -1,9 +1,20 @@
 import types
 
 import pytest
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 
 import persistence_kit.api.route_loader as loader
+
+
+def _router_paths(router: APIRouter) -> set[str]:
+    """Rutas efectivas del router leídas del esquema OpenAPI.
+
+    Desde FastAPI 0.141 `include_router` deja envoltorios `_IncludedRouter` en
+    `.routes`, así que recorrerlas directamente ya no expone los paths.
+    """
+    app = FastAPI()
+    app.include_router(router)
+    return set(app.openapi()["paths"])
 
 
 def test_iter_route_modules_filters_hidden_and_import_errors(monkeypatch):
@@ -72,7 +83,7 @@ async def test_build_api_router_includes_only_valid_routers(monkeypatch):
     api = loader.build_api_router("app.infrastructure.routes", prefix="/api")
 
     assert isinstance(api, APIRouter)
-    paths = {route.path for route in api.routes}
+    paths = _router_paths(api)
     assert "/api/ping" in paths
 
 
@@ -115,7 +126,7 @@ async def test_build_api_router_excludes_modules_by_name(monkeypatch):
         prefix="/api",
         excluded_modules=["auth_router", "security_admin_router"],
     )
-    paths = {route.path for route in api.routes}
+    paths = _router_paths(api)
 
     assert "/api/rooms/ping" in paths
     assert "/api/auth/ping" not in paths

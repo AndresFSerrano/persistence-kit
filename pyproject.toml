@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "persistence-kit"
-version = "3.7.1"
+version = "3.8.0"
 description = "Reusable persistence and repository toolkit"
 authors = ["Andres Felipe Serrano Barrios <andresfserrano1@gmail.com>"]
 readme = "README.md"
@@ -30,7 +30,7 @@ sqlalchemy = {extras = ["asyncio"], version = "^2.0.43"}
 asyncpg = "^0.30.0"
 typing-extensions = "^4.12.0"
 pydantic-settings = "^2.3.0"
-fastapi = {version = "^0.115.0", optional = true}
+fastapi = {version = ">=0.115.0,<1.0.0", optional = true}
 boto3 = {version = "^1.35.0", optional = true}
 pyjwt = {version = "^2.10.1", extras = ["crypto"], optional = true}
 python-multipart = {version = "^0.0.20", optional = true}
