@@ -472,7 +472,7 @@ def test_reset_clears_all_state():
     )
     provider.reset()
     import asyncio
-    page = asyncio.get_event_loop().run_until_complete(provider.list_users(page=1, page_size=50))
+    page = asyncio.run(provider.list_users(page=1, page_size=50))
     assert page.total == 0
 
 
