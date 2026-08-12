@@ -193,3 +193,63 @@ def test_serialize_value_preserves_strings():
 
 def test_serialize_value_preserves_ints():
     assert _serialize_value(42) == 42
+
+
+class PaginatedFakeTable:
+    def __init__(self, pages: list[list[dict]]):
+        self.pages = pages
+        self.scan_calls = 0
+
+    def scan(self, **kwargs) -> dict:
+        self.scan_calls += 1
+        start_key = kwargs.get("ExclusiveStartKey")
+        index = start_key["page"] if start_key is not None else 0
+        response: dict[str, Any] = {"Items": list(self.pages[index])}
+        if index + 1 < len(self.pages):
+            response["LastEvaluatedKey"] = {"page": index + 1}
+        return response
+
+
+def _paginated_repo(mapper, pages: list[list[dict]]):
+    table = PaginatedFakeTable(pages)
+    repo = DynamoRepository.__new__(DynamoRepository)
+    repo._mapper = mapper
+    repo._table = table
+    repo._dynamodb = MagicMock()
+    return repo, table
+
+
+PAGES = [
+    [{"id": "1", "name": "first", "value": 1}],
+    [{"id": "2", "name": "second", "value": 2}],
+    [{"id": "3", "name": "third", "value": 3}],
+]
+
+
+@pytest.mark.asyncio
+async def test_list_by_fields_stops_scanning_once_the_limit_is_covered(mapper):
+    repo, table = _paginated_repo(mapper, PAGES)
+
+    results = await repo.list_by_fields({"name": "first"}, offset=0, limit=1)
+
+    assert table.scan_calls == 1
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_by_fields_scans_every_page_when_sorting(mapper):
+    repo, table = _paginated_repo(mapper, PAGES)
+
+    await repo.list_by_fields({"name": "first"}, offset=0, limit=1, sort_by="name")
+
+    assert table.scan_calls == len(PAGES)
+
+
+@pytest.mark.asyncio
+async def test_count_by_fields_scans_every_page(mapper):
+    repo, table = _paginated_repo(mapper, PAGES)
+
+    total = await repo.count_by_fields({"name": "first"})
+
+    assert table.scan_calls == len(PAGES)
+    assert total == len(PAGES)

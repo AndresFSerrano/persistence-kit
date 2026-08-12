@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Optional, Sequence, TypeVar, Generic, Hashable, Mapping, Any
 try:
     from typing import override
@@ -129,14 +130,18 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
     @override
     async def add(self, entity: T) -> None:
         item = self._mapper.to_item(entity)
-        self._table.put_item(
+        await asyncio.to_thread(
+            self._table.put_item,
             Item=item,
             ConditionExpression=Attr("id").not_exists(),
         )
 
     @override
     async def get(self, entity_id: TId) -> Optional[T]:
-        response = self._table.get_item(Key={"id": _serialize_value(entity_id)})
+        response = await asyncio.to_thread(
+            self._table.get_item,
+            Key={"id": _serialize_value(entity_id)},
+        )
         item = response.get("Item")
         return self._mapper.from_item(item) if item else None
 
@@ -149,7 +154,7 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
         sort_by: str | None = None,
         sort_desc: bool = False,
     ) -> Sequence[T]:
-        items = self._scan_all()
+        items = await asyncio.to_thread(self._scan_all)
         entities = [self._mapper.from_item(i) for i in items]
         if sort_by is not None:
             if not self._mapper.has_attr(sort_by):
@@ -160,18 +165,22 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
     @override
     async def update(self, entity: T) -> None:
         item = self._mapper.to_item(entity)
-        self._table.put_item(Item=item)
+        await asyncio.to_thread(self._table.put_item, Item=item)
 
     @override
     async def delete(self, entity_id: TId) -> None:
-        self._table.delete_item(Key={"id": _serialize_value(entity_id)})
+        await asyncio.to_thread(
+            self._table.delete_item,
+            Key={"id": _serialize_value(entity_id)},
+        )
 
     @override
     async def get_by_index(self, index: str, value: Hashable) -> Optional[T]:
         field = self._mapper.unique_fields().get(index)
         if not field:
             return None
-        response = self._table.scan(
+        response = await asyncio.to_thread(
+            self._table.scan,
             FilterExpression=Attr(field).eq(_serialize_value(value)),
             Limit=1,
         )
@@ -180,7 +189,7 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
 
     @override
     async def count(self) -> int:
-        return self._table.item_count
+        return await asyncio.to_thread(self._read_item_count)
 
     @override
     async def count_by_fields(
@@ -192,7 +201,7 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
         filter_expr = _build_filter(self._mapper, criteria)
         if filter_expr is False:
             return 0
-        items = self._scan_with_filter(filter_expr)
+        items = await asyncio.to_thread(self._scan_with_filter, filter_expr)
         return len(items)
 
     @override
@@ -210,7 +219,8 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
         filter_expr = _build_filter(self._mapper, criteria)
         if filter_expr is False:
             return []
-        items = self._scan_with_filter(filter_expr)
+        max_items = None if sort_by is not None or limit is None else offset + limit
+        items = await asyncio.to_thread(self._scan_with_filter, filter_expr, max_items)
         entities = [self._mapper.from_item(i) for i in items]
         if sort_by is not None:
             if not self._mapper.has_attr(sort_by):
@@ -232,9 +242,9 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
             filter_expr = _build_filter(self._mapper, criteria)
             if filter_expr is False:
                 return []
-            items = self._scan_with_filter(filter_expr)
+            items = await asyncio.to_thread(self._scan_with_filter, filter_expr)
         else:
-            items = self._scan_all()
+            items = await asyncio.to_thread(self._scan_all)
         seen: set = set()
         result: list[Any] = []
         for item in items:
@@ -243,6 +253,9 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
                 seen.add(val)
                 result.append(val)
         return result
+
+    def _read_item_count(self) -> int:
+        return self._table.item_count
 
     def _scan_all(self) -> list[dict]:
         items: list[dict] = []
@@ -253,7 +266,11 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
             items.extend(response.get("Items", []))
         return items
 
-    def _scan_with_filter(self, filter_expr: ConditionBase | None) -> list[dict]:
+    def _scan_with_filter(
+        self,
+        filter_expr: ConditionBase | None,
+        max_items: Optional[int] = None,
+    ) -> list[dict]:
         items: list[dict] = []
         kwargs: dict[str, Any] = {}
         if filter_expr is not None:
@@ -261,6 +278,8 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
         response = self._table.scan(**kwargs)
         items.extend(response.get("Items", []))
         while "LastEvaluatedKey" in response:
+            if max_items is not None and len(items) >= max_items:
+                break
             kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
             response = self._table.scan(**kwargs)
             items.extend(response.get("Items", []))
