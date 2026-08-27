@@ -96,6 +96,36 @@ _OPTIONAL_EXPORTS = {
         "get_token_verifier",
         "security",
     ),
+    "KeyProvider": ("persistence_kit.security.ports", "KeyProvider", "security"),
+    "key_provider": ("persistence_kit.security.factory", "key_provider", "security"),
+    "LocalKeyProvider": (
+        "persistence_kit.security.providers.encryption_provider",
+        "LocalKeyProvider",
+        "sealed",
+    ),
+    "KmsKeyProvider": (
+        "persistence_kit.security.providers.encryption_provider",
+        "KmsKeyProvider",
+        "sealed",
+    ),
+    "SealedPayloadError": (
+        "persistence_kit.api.exceptions",
+        "SealedPayloadError",
+        "api",
+    ),
+    "sealed": ("persistence_kit.api.sealed_routes", "sealed", "sealed"),
+    "build_sealed_route": (
+        "persistence_kit.api.sealed_routes",
+        "build_sealed_route",
+        "sealed",
+    ),
+    "declare_key_header": (
+        "persistence_kit.api.sealed_routes",
+        "declare_key_header",
+        "sealed",
+    ),
+    "SEALED_FLAG": ("persistence_kit.api.sealed_routes", "SEALED_FLAG", "sealed"),
+    "KEY_HEADER": ("persistence_kit.api.sealed_routes", "KEY_HEADER", "sealed"),
     "RegistrationResult": (
         "persistence_kit.security.registration",
         "RegistrationResult",

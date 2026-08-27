@@ -1,7 +1,8 @@
 import base64
-from typing import Any, Protocol
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 
 from persistence_kit.security.registration import (
@@ -131,9 +132,11 @@ class KeyProvider(Protocol):
 
     async def unwrap_key(self, wrapped: bytes) -> bytes: ...
 
-    async def _public_key_obj(self) -> RSAPublicKey: ...
+    async def _public_key_obj(self) -> "RSAPublicKey": ...
 
     async def public_key_der_b64(self) -> str:
+        from cryptography.hazmat.primitives import serialization
+
         public_key = await self._public_key_obj()
         der = public_key.public_bytes(
             serialization.Encoding.DER,
