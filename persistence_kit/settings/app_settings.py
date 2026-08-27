@@ -99,6 +99,9 @@ class PersistenceKitSettings(RepoSettings):
     rest_default_user_agent: str | None = None
     rest_service_urls: dict[str, str] = {}
 
+    sealed_private_key: str = ""
+    kms_key_id: str = ""
+
     model_config = SettingsConfigDict(extra="ignore")
 
     @property

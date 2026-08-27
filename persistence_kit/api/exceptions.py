@@ -31,3 +31,11 @@ class BusinessRuleException(BaseAPIException):
 class DatabaseException(BaseAPIException):
     def __init__(self, detail: str = "Error en la base de datos"):
         super().__init__(status_code=500, detail=detail)
+
+class SealedPayloadError(RuntimeError):
+    """El sobre cifrado no se pudo abrir.
+
+    Cubre tanto el sobre mal formado como el contenido que no pasa la
+    verificación de integridad. En ambos casos el dato lo mandó un tercero,
+    así que el borde HTTP lo traduce a un 400 y no a un 500.
+    """

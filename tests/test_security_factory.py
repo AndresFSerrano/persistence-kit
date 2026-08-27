@@ -126,3 +126,40 @@ def test_token_verifier_cached_rejects_unsupported_provider():
 
     assert err.value.status_code == 500
     assert "no soportado" in err.value.detail.lower()
+
+
+def test_key_provider_uses_kms_when_key_id_is_set(monkeypatch):
+    import persistence_kit.security.providers.encryption_provider as encryption_mod
+
+    captured: list[str] = []
+
+    class FakeKmsProvider:
+        def __init__(self, key_id: str):
+            captured.append(key_id)
+
+    mod._key_provider_cached.cache_clear()
+    monkeypatch.setattr(encryption_mod, "KmsKeyProvider", FakeKmsProvider)
+    settings = PersistenceKitSettings(kms_key_id="key-1")
+
+    provider = mod.key_provider(settings)
+
+    assert isinstance(provider, FakeKmsProvider)
+    assert captured == ["key-1"]
+
+
+def test_key_provider_uses_local_without_kms():
+    from persistence_kit.security.providers.encryption_provider import LocalKeyProvider
+
+    mod._key_provider_cached.cache_clear()
+    settings = PersistenceKitSettings(sealed_private_key="una-llave-en-base64")
+
+    provider = mod.key_provider(settings)
+
+    assert isinstance(provider, LocalKeyProvider)
+
+
+def test_key_provider_returns_cached_instance():
+    mod._key_provider_cached.cache_clear()
+    settings = PersistenceKitSettings(sealed_private_key="una-llave-en-base64")
+
+    assert mod.key_provider(settings) is mod.key_provider(settings)

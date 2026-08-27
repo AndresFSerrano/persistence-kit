@@ -1,4 +1,8 @@
+import base64
 from typing import Any, Protocol
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+
 
 from persistence_kit.security.registration import (
     LoginResult,
@@ -121,3 +125,18 @@ class IdentityProvider(Protocol):
 
 class TokenVerifier(Protocol):
     def verify(self, token: str) -> dict[str, Any]: ...
+
+
+class KeyProvider(Protocol):
+
+    async def unwrap_key(self, wrapped: bytes) -> bytes: ...
+
+    async def _public_key_obj(self) -> RSAPublicKey: ...
+
+    async def public_key_der_b64(self) -> str:
+        public_key = await self._public_key_obj()
+        der = public_key.public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        return base64.b64encode(der).decode("ascii")

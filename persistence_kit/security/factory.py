@@ -11,6 +11,7 @@ from persistence_kit.settings import (
     AuthProvider,
     PersistenceKitSettings,
 )
+from persistence_kit.security.ports import KeyProvider
 
 MEMORY_JWT_SECRET = DEFAULT_MEMORY_JWT_SECRET
 MEMORY_JWT_ISSUER = DEFAULT_MEMORY_JWT_ISSUER
@@ -154,3 +155,18 @@ def get_token_verifier(settings: PersistenceKitSettings) -> TokenVerifier:
         settings.memory_jwt_secret,
         settings.memory_jwt_issuer,
     )
+
+@lru_cache(maxsize=1)
+def _key_provider_cached(kms_key_id: str | None, sealed_private_key: str) -> KeyProvider:
+    from persistence_kit.security.providers.encryption_provider import (
+        KmsKeyProvider,
+        LocalKeyProvider,
+    )
+
+    if kms_key_id:
+        return KmsKeyProvider(kms_key_id)
+    return LocalKeyProvider(sealed_private_key)
+
+
+def key_provider(settings: PersistenceKitSettings) -> KeyProvider:
+    return _key_provider_cached(settings.kms_key_id, settings.sealed_private_key)

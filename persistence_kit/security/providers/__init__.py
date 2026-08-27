@@ -1,4 +1,9 @@
-__all__ = ["CognitoIdentityProvider", "MemorySecurityProvider"]
+__all__ = [
+    "CognitoIdentityProvider",
+    "KmsKeyProvider",
+    "LocalKeyProvider",
+    "MemorySecurityProvider",
+]
 
 _PROVIDERS = {
     "CognitoIdentityProvider": (
@@ -8,6 +13,14 @@ _PROVIDERS = {
     "MemorySecurityProvider": (
         "persistence_kit.security.providers.memory_security_provider",
         "MemorySecurityProvider",
+    ),
+    "LocalKeyProvider": (
+        "persistence_kit.security.providers.encryption_provider",
+        "LocalKeyProvider",
+    ),
+    "KmsKeyProvider": (
+        "persistence_kit.security.providers.encryption_provider",
+        "KmsKeyProvider",
     ),
 }
 
