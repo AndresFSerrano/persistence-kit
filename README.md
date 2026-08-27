@@ -105,7 +105,8 @@ pip install "persistence-kit[api,security,restclient]"
 | `storage-routes` | FastAPI route to serve local exports | fastapi, python-multipart |
 | `dynamodb` | DynamoDB repository backend | boto3 |
 | `restclient` | The REST client and its cache | httpx |
-| `testing` | Everything the test suite needs | fastapi, pyjwt, httpx, python-multipart |
+| `sealed` | Encrypted request and response payloads | fastapi, cryptography |
+| `testing` | Everything the test suite needs | fastapi, pyjwt, httpx, python-multipart, cryptography |
 | `all` | Every optional capability | all of the above |
 
 Importing `persistence_kit` never loads an optional dependency by itself. Ask for
@@ -121,11 +122,11 @@ add, not an obscure `ImportError`.
 | `repository_factory/` | The entity registry, the factory, and the view repository that populates relations |
 | `settings/` | `RepoSettings` and `PersistenceKitSettings`, plus shared enums and parsers |
 | `storage/` | Object storage: local directory or S3, with presigned URLs |
-| `security/` | Identity providers and JWT verifiers, memory or Cognito |
+| `security/` | Identity providers and JWT verifiers, memory or Cognito, and the sealed envelope format |
 | `restclient/` | HTTP client with pluggable auth, endpoint resolution, retries and DTO decoding |
 | `cache/` | Key-value cache with TTL: memory, Mongo or DynamoDB |
 | `resilience/` | Circuit breaker, shared by anything that calls out |
-| `api/` | Reusable FastAPI pieces: error handlers, pagination, rate limiting |
+| `api/` | Reusable FastAPI pieces: error handlers, pagination, rate limiting, sealed routes |
 | `bootstrap/` | Startup helpers, configuration registry, seed orchestration |
 | `utils/` | Small transversal helpers such as upserts |
 
@@ -186,6 +187,46 @@ Your roles, authorization policies and route permission matrices stay in your
 application. The kit only answers "who is this".
 
 Needs `[security]`, or `[security-cognito]` for Cognito.
+
+## Sealed payloads
+
+For data that should not be readable between the browser and your handler, not
+even to a proxy that terminates TLS.
+
+```python
+from fastapi import APIRouter
+
+from persistence_kit import build_sealed_route, sealed
+
+router = APIRouter(route_class=build_sealed_route(get_settings))
+
+
+@router.post("/login", openapi_extra=sealed(fields=["password"], response_fields=["token"]))
+async def login(payload: LoginRequest) -> LoginResponse:
+    ...
+```
+
+The client generates one AES-256-GCM key per request, wraps it with the server's
+public key, and sends it inside the envelope. The route unwraps it, opens the
+payload before your handler runs, and seals whatever the handler returns with the
+same key. Your handler never sees an envelope.
+
+Two modes. `sealed()` encrypts the whole body and the whole response.
+`sealed(fields=[...])` encrypts named fields only, so the rest of the payload
+stays readable; paths may be nested and may cross lists, as in `items[].price`.
+
+The private key comes from `SEALED_PRIVATE_KEY`, a base64 PEM, or stays inside
+AWS KMS when you set `KMS_KEY_ID`. Clients fetch the matching public key from
+your own endpoint, built on `KeyProvider.public_key_der_b64()`.
+
+Envelopes carry a timestamp, expire after sixty seconds, and each nonce is
+accepted once, so a captured request cannot be replayed. Anything malformed,
+expired, replayed or tampered with comes back as a 400.
+
+In `local` stage a plain body is allowed through, so you can call your API from
+Swagger while developing.
+
+Needs `[sealed]`.
 
 ## REST client and cache
 
@@ -266,6 +307,8 @@ The factories read that object: `get_identity_provider`, `get_token_verifier`,
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB` | Postgres connection |
 | `POSTGRES_SSL` | Set when the server requires TLS |
 | `DYNAMODB_REGION`, `DYNAMODB_TABLE_PREFIX` | DynamoDB connection |
+| `SEALED_PRIVATE_KEY` | Base64 PEM of the RSA private key that unwraps sealed payloads |
+| `KMS_KEY_ID` | Unwrap through AWS KMS instead, leaving the private key inside the service |
 
 ## Wiring it into an application
 
@@ -427,5 +470,6 @@ every iteration.
 
 - [`docs/repositories_and_relations.md`](docs/repositories_and_relations.md): relations, pivots, and how the view repository populates them.
 - [`docs/restclient_and_cache.md`](docs/restclient_and_cache.md): the REST client, its auth strategies, and the cache.
+- [`docs/sealed_payloads.md`](docs/sealed_payloads.md): the envelope format, the key providers, and what the client has to do.
 
 Author: Andres Felipe Serrano Barrios · [github.com/AndresFSerrano/persistence-kit](https://github.com/AndresFSerrano/persistence-kit)
