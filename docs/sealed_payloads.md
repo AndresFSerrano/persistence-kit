@@ -141,6 +141,7 @@ Everything the client can get wrong comes back as `400`, never `500`:
 | Older than sixty seconds | `El sobre esta vencido` |
 | Nonce already seen | `El sobre ya fue usado` |
 | Wrong key or altered ciphertext | `El contenido fue alterado o la llave no corresponde.` |
+| Whole envelope sent to a field-mode route | `Esta ruta cifra campos sueltos, no el cuerpo entero.` |
 | Declared field absent | `El campo 'x' esta declarado pero no figura en el sobre` |
 | Declared field in plaintext, outside `local` | `El campo x debe estar cifrado` |
 

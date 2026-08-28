@@ -143,6 +143,8 @@ def _locate_all(payload: dict, path: str) -> list[tuple[dict, str]]:
 def _open_fields(payload: dict, fields: list[str], data_key: bytes, settings: PersistenceKitSettings) -> dict:
     if not isinstance(payload, dict):
         raise SealedPayloadError("El cuerpo debe ser un objeto JSON para cifrar campos.")
+    if "v" in payload and "ciphertext" in payload:
+        raise SealedPayloadError("Esta ruta cifra campos sueltos, no el cuerpo entero.")
     for field in fields:
         pairs = _locate_all(payload, field)
         if not pairs:
