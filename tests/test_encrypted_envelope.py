@@ -6,10 +6,10 @@ from typing import cast
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from persistence_kit.api.exceptions import SealedPayloadError
-from persistence_kit.security.sealed.envelope import (
-    HYBRID_VERSION, MAX_ENVELOPE_AGE_SECONDS, NONCE_BYTES, VERSION, open_hybrid,
-    open_sealed, seal
+from persistence_kit.security.encrypted.errors import EncryptedPayloadError
+from persistence_kit.security.encrypted.envelope import (
+    HYBRID_VERSION, MAX_ENVELOPE_AGE_SECONDS, NONCE_BYTES, VERSION, decrypt_hybrid,
+    decrypt, encrypt
 )
 from persistence_kit.security.ports import KeyProvider
 
@@ -36,7 +36,7 @@ def payload():
 
 @pytest.fixture
 def envelope(key, payload):
-    return seal(json.dumps(payload).encode(), key)
+    return encrypt(json.dumps(payload).encode(), key)
 
 
 @pytest.fixture
@@ -63,17 +63,17 @@ def test_seal_return_four_keys(envelope):
 
 def test_seal_round_trip(key, payload, envelope):
 
-    return_envelope = open_sealed(envelope, key)
+    return_envelope = decrypt(envelope, key)
 
     assert json.loads(return_envelope) == payload
 
 
 def test_seal_does_not_repeat_envelopes(key, payload): 
-    envelope_one = seal(
+    envelope_one = encrypt(
         json.dumps(payload).encode(),
         key
     )
-    envelope_two = seal(
+    envelope_two = encrypt(
         json.dumps(payload).encode(),
         key
     )
@@ -83,8 +83,13 @@ def test_seal_does_not_repeat_envelopes(key, payload):
 
 
 def test_open_seal_reject_non_dict(key):
-    with pytest.raises(SealedPayloadError, match = "Sobre mal formado"):
-        open_sealed("no soy un dict", key)
+    with pytest.raises(EncryptedPayloadError, match = "Sobre mal formado"):
+        decrypt("no soy un dict", key)
+
+
+def test_open_rejects_a_hybrid_envelope(hybrid_envelope, key):
+    with pytest.raises(EncryptedPayloadError, match = "Versión de sobre no soportada"):
+        decrypt(hybrid_envelope, key)
 
 
 @pytest.mark.parametrize(
@@ -95,51 +100,51 @@ def test_open_seal_reject_non_dict(key):
          ("ts", "Sobre mal formado")
         ]
 )
-def test_open_sealed_rejects_missing_field(envelope, key, field, message):
+def test_open_encrypted_rejects_missing_field(envelope, key, field, message):
     del envelope[field]
-    with pytest.raises(SealedPayloadError, match = message):
-        open_sealed(envelope, key)
+    with pytest.raises(EncryptedPayloadError, match = message):
+        decrypt(envelope, key)
 
 
 @pytest.mark.parametrize(
     "field, value",
     [("nonce", "no-es-base64!!"), ("ciphertext", "###"), ("ts", "no-soy-un-número")]
 )
-def test_open_sealed_rejects_unreadable_field(envelope, key, field, value):
+def test_open_encrypted_rejects_unreadable_field(envelope, key, field, value):
     envelope[field] = value
-    with pytest.raises(SealedPayloadError, match = "Sobre mal formado"):
-        open_sealed(envelope, key)
+    with pytest.raises(EncryptedPayloadError, match = "Sobre mal formado"):
+        decrypt(envelope, key)
 
 
-def test_open_sealed_long_invalid_nonce(envelope, key):
+def test_open_encrypted_long_invalid_nonce(envelope, key):
     envelope["nonce"] = base64.b64encode(b"12345678").decode()
-    with pytest.raises(SealedPayloadError, match = "Sobre mal formado"):
-        open_sealed(envelope, key)
+    with pytest.raises(EncryptedPayloadError, match = "Sobre mal formado"):
+        decrypt(envelope, key)
 
 @pytest.mark.parametrize("offset", [-MAX_ENVELOPE_AGE_SECONDS -1, MAX_ENVELOPE_AGE_SECONDS +1])
-def test_open_sealed_expired(envelope, key, offset):
+def test_open_encrypted_expired(envelope, key, offset):
     envelope["ts"] = int(time.time()) + offset
-    with pytest.raises(SealedPayloadError, match = "El sobre esta vencido"):
-        open_sealed(envelope, key)
+    with pytest.raises(EncryptedPayloadError, match = "El sobre esta vencido"):
+        decrypt(envelope, key)
 
 
 def test_seal_and_open_with_different_key(envelope):
-    with pytest.raises(SealedPayloadError, match = "El contenido fue alterado o la llave no corresponde"):
-        open_sealed(envelope, AESGCM.generate_key(256))
+    with pytest.raises(EncryptedPayloadError, match = "El contenido fue alterado o la llave no corresponde"):
+        decrypt(envelope, AESGCM.generate_key(256))
 
 
-def test_open_sealed_rejects_manipulated_envope(envelope, key):
+def test_open_encrypted_rejects_manipulated_envope(envelope, key):
     raw = bytearray(base64.b64decode(envelope["ciphertext"]))
     raw[0] ^= 1
     envelope["ciphertext"] = base64.b64encode(bytes(raw)).decode()
-    with pytest.raises(SealedPayloadError, match = "El contenido fue alterado o la llave no corresponde"):
-        open_sealed(envelope, key)
+    with pytest.raises(EncryptedPayloadError, match = "El contenido fue alterado o la llave no corresponde"):
+        decrypt(envelope, key)
 
 
 @pytest.mark.asyncio
 async def test_open_hybrid_returns_plaintext_and_key(hybrid_envelope, key, payload, provider):
 
-    plaintext, data_key = await open_hybrid(hybrid_envelope, provider)
+    plaintext, data_key = await decrypt_hybrid(hybrid_envelope, provider)
 
     assert data_key == key
     assert json.loads(plaintext) == payload
@@ -148,14 +153,23 @@ async def test_open_hybrid_returns_plaintext_and_key(hybrid_envelope, key, paylo
 
 @pytest.mark.asyncio
 async def test_open_hybrid_bad_version(envelope, provider):
-    with pytest.raises(SealedPayloadError, match = "Versión de sobre no soportada"):
-        await open_hybrid(envelope, provider)
+    with pytest.raises(EncryptedPayloadError, match = "Versión de sobre no soportada"):
+        await decrypt_hybrid(envelope, provider)
     assert provider.wrapped is None
 
 
 @pytest.mark.asyncio
 async def test_open_hybrid_reject_invalid_field(hybrid_envelope, provider):
     hybrid_envelope["key"] = "no-es-base64!!"
-    with pytest.raises(SealedPayloadError, match = "No se pudo abrir la llave del sobre"):
-        await open_hybrid(hybrid_envelope, provider)
+    with pytest.raises(EncryptedPayloadError, match = "No se pudo abrir la llave del sobre"):
+        await decrypt_hybrid(hybrid_envelope, provider)
     assert provider.wrapped is None
+
+
+@pytest.mark.asyncio
+async def test_open_hybrid_does_not_touch_the_envelope(hybrid_envelope, provider):
+    original = dict(hybrid_envelope)
+
+    await decrypt_hybrid(hybrid_envelope, provider)
+
+    assert hybrid_envelope == original

@@ -3,7 +3,11 @@ from fastapi import HTTPException
 
 import persistence_kit.security.factory as mod
 from persistence_kit.security.token_verifiers.memory_jwt_verifier import MemoryJwtVerifier
-from persistence_kit.settings import AuthProvider, PersistenceKitSettings
+from persistence_kit.settings import (
+    AuthProvider,
+    PersistenceKitSettings,
+    EncryptedType,
+)
 
 
 def test_get_identity_provider_returns_cached_instance(monkeypatch):
@@ -128,7 +132,7 @@ def test_token_verifier_cached_rejects_unsupported_provider():
     assert "no soportado" in err.value.detail.lower()
 
 
-def test_key_provider_uses_kms_when_key_id_is_set(monkeypatch):
+def test_get_key_provider_uses_kms_when_the_provider_says_so(monkeypatch):
     import persistence_kit.security.providers.encryption_provider as encryption_mod
 
     captured: list[str] = []
@@ -139,27 +143,77 @@ def test_key_provider_uses_kms_when_key_id_is_set(monkeypatch):
 
     mod._key_provider_cached.cache_clear()
     monkeypatch.setattr(encryption_mod, "KmsKeyProvider", FakeKmsProvider)
-    settings = PersistenceKitSettings(kms_key_id="key-1")
+    settings = PersistenceKitSettings(
+        encrypted_type=EncryptedType.PRODUCTION, kms_key_id="key-1"
+    )
 
-    provider = mod.key_provider(settings)
+    provider = mod.get_key_provider(settings)
 
     assert isinstance(provider, FakeKmsProvider)
     assert captured == ["key-1"]
 
 
-def test_key_provider_uses_local_without_kms():
+def test_get_key_provider_uses_memory_by_default():
+    from persistence_kit.security.providers.encryption_provider import MemoryKeyProvider
+
+    mod._key_provider_cached.cache_clear()
+    settings = PersistenceKitSettings()
+
+    provider = mod.get_key_provider(settings)
+
+    assert isinstance(provider, MemoryKeyProvider)
+
+
+def test_get_key_provider_uses_local_when_the_type_says_so():
     from persistence_kit.security.providers.encryption_provider import LocalKeyProvider
 
     mod._key_provider_cached.cache_clear()
-    settings = PersistenceKitSettings(sealed_private_key="una-llave-en-base64")
+    settings = PersistenceKitSettings(
+        encrypted_type=EncryptedType.LOCAL, encrypted_private_key="una-llave-en-base64"
+    )
 
-    provider = mod.key_provider(settings)
+    provider = mod.get_key_provider(settings)
 
     assert isinstance(provider, LocalKeyProvider)
 
 
-def test_key_provider_returns_cached_instance():
+def test_get_key_provider_rejects_local_without_a_private_key():
     mod._key_provider_cached.cache_clear()
-    settings = PersistenceKitSettings(sealed_private_key="una-llave-en-base64")
+    settings = PersistenceKitSettings(encrypted_type=EncryptedType.LOCAL)
 
-    assert mod.key_provider(settings) is mod.key_provider(settings)
+    with pytest.raises(HTTPException) as err:
+        mod.get_key_provider(settings)
+
+    assert "ENCRYPTED_PRIVATE_KEY" in err.value.detail
+
+
+def test_get_key_provider_rejects_kms_without_a_key_id():
+    mod._key_provider_cached.cache_clear()
+    settings = PersistenceKitSettings(encrypted_type=EncryptedType.PRODUCTION)
+
+    with pytest.raises(HTTPException) as err:
+        mod.get_key_provider(settings)
+
+    assert "KMS_KEY_ID" in err.value.detail
+
+
+def test_get_key_provider_ignores_a_kms_key_id_when_the_provider_is_local():
+    from persistence_kit.security.providers.encryption_provider import LocalKeyProvider
+
+    mod._key_provider_cached.cache_clear()
+    settings = PersistenceKitSettings(
+        encrypted_type=EncryptedType.LOCAL,
+        encrypted_private_key="una-llave-en-base64",
+        kms_key_id="key-1",
+    )
+
+    assert isinstance(mod.get_key_provider(settings), LocalKeyProvider)
+
+
+def test_get_key_provider_returns_cached_instance():
+    mod._key_provider_cached.cache_clear()
+    settings = PersistenceKitSettings(
+        encrypted_type=EncryptedType.LOCAL, encrypted_private_key="una-llave-en-base64"
+    )
+
+    assert mod.get_key_provider(settings) is mod.get_key_provider(settings)

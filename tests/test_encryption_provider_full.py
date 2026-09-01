@@ -1,4 +1,5 @@
 import os
+import sys
 import base64
 import pytest
 from types import SimpleNamespace
@@ -8,7 +9,11 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa, ed25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from persistence_kit.security.providers.encryption_provider import LocalKeyProvider
+from persistence_kit.security.ports import public_key_der_b64
+from persistence_kit.security.providers.encryption_provider import (
+    LocalKeyProvider,
+    MemoryKeyProvider,
+)
 import persistence_kit.security.providers.encryption_provider as mod
 
 OAEP_PADDING = padding.OAEP(
@@ -34,7 +39,9 @@ class FakeKmsClient:
 @pytest.fixture
 def kms_client(monkeypatch):
     client = FakeKmsClient()
-    monkeypatch.setattr(mod, "boto3", SimpleNamespace(client = lambda service_name: client))
+    monkeypatch.setitem(
+        sys.modules, "boto3", SimpleNamespace(client = lambda service_name: client)
+    )
     return client
 
 
@@ -100,7 +107,7 @@ def test_rejects_a_non_rsa_key():
 
 @pytest.mark.asyncio
 async def test_public_key_der_b64_returns_the_public_key(rsa_key, provider):
-    der_b64 = await provider.public_key_der_b64()
+    der_b64 = await public_key_der_b64(provider)
 
     loaded = serialization.load_der_public_key(base64.b64decode(der_b64))
 
@@ -114,8 +121,26 @@ async def  test_unwrap_key_fails_with_garbage(provider):
         await provider.unwrap_key(os.urandom(256))
 
 
+@pytest.mark.asyncio
+async def test_memory_provider_unwraps_what_its_public_key_wrapped(key):
+    provider = MemoryKeyProvider()
+    public_key = await provider.public_key()
+
+    wrapped = public_key.encrypt(key, OAEP_PADDING)
+
+    assert await provider.unwrap_key(wrapped) == key
+
+
+@pytest.mark.asyncio
+async def test_memory_provider_generates_a_key_per_instance(key):
+    wrapped = (await MemoryKeyProvider().public_key()).encrypt(key, OAEP_PADDING)
+
+    with pytest.raises(ValueError):
+        await MemoryKeyProvider().unwrap_key(wrapped)
+
+
 def test_requires_boto3(monkeypatch):
-    monkeypatch.setattr(mod, "boto3", None)
+    monkeypatch.setitem(sys.modules, "boto3", None)
     with pytest.raises(RuntimeError, match = "Falta la dependencia boto3 para desenvolver llaves con KMS"):
         mod.KmsKeyProvider("key-1")
 
@@ -123,12 +148,12 @@ def test_requires_boto3(monkeypatch):
 @pytest.mark.asyncio
 async def test_unwrap_key_calls_kms_with_the_right_arguments(kms_client):
     provider = mod.KmsKeyProvider("key-1")
-    data_key = await provider.unwrap_key(b"sealed")
+    data_key = await provider.unwrap_key(b"encrypted")
 
     assert data_key == b"the-key"
     assert kms_client.decrypt_args == {
         "KeyId": "key-1",
-        "CiphertextBlob": b"sealed",
+        "CiphertextBlob": b"encrypted",
         "EncryptionAlgorithm": "RSAES_OAEP_SHA_256",
     }
 
@@ -139,38 +164,38 @@ async def test_unwrap_key_translates_client_error(kms_client, boom):
     provider = mod.KmsKeyProvider("key-1")
 
     with pytest.raises(RuntimeError, match = "El KMS no pudo desenvolver la llave") as err:
-        await provider.unwrap_key(b"sealed")
+        await provider.unwrap_key(b"encrypted")
 
     assert isinstance(err.value.__cause__, ClientError)
 
 
 @pytest.mark.asyncio
-async def test_public_key_obj_loads_the_der_from_kms(kms_client, rsa_key):
+async def test_public_key_loads_the_der_from_kms(kms_client, rsa_key):
     kms_client.get_public_key_der = rsa_key.public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
     provider = mod.KmsKeyProvider("key-1")
 
-    loaded = await provider._public_key_obj()
+    loaded = await provider.public_key()
 
     assert loaded.public_numbers() == rsa_key.public_key().public_numbers()
     assert kms_client.get_public_key_args == {"KeyId": "key-1"}
 
 
 @pytest.mark.asyncio
-async def test_public_key_obj_translates_client_error(kms_client, boom):
+async def test_public_key_translates_client_error(kms_client, boom):
     kms_client.get_public_key = boom("GetPublicKey")
     provider = mod.KmsKeyProvider("key-1")
 
     with pytest.raises(RuntimeError, match = "El KMS no pudo entregar la llave pública") as err:
-        await provider._public_key_obj()
+        await provider.public_key()
 
     assert isinstance(err.value.__cause__, ClientError)
 
 
 @pytest.mark.asyncio
-async def test_public_key_obj_rejects_a_non_rsa_key(kms_client):
+async def test_public_key_rejects_a_non_rsa_key(kms_client):
     kms_client.get_public_key_der = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -178,4 +203,4 @@ async def test_public_key_obj_rejects_a_non_rsa_key(kms_client):
     provider = mod.KmsKeyProvider("key-1")
 
     with pytest.raises(RuntimeError, match = "La llave del KMS no es RSA"):
-        await provider._public_key_obj()
+        await provider.public_key()

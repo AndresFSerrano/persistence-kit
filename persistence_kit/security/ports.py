@@ -132,14 +132,15 @@ class KeyProvider(Protocol):
 
     async def unwrap_key(self, wrapped: bytes) -> bytes: ...
 
-    async def _public_key_obj(self) -> "RSAPublicKey": ...
+    async def public_key(self) -> "RSAPublicKey": ...
 
-    async def public_key_der_b64(self) -> str:
-        from cryptography.hazmat.primitives import serialization
 
-        public_key = await self._public_key_obj()
-        der = public_key.public_bytes(
-            serialization.Encoding.DER,
-            serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
-        return base64.b64encode(der).decode("ascii")
+async def public_key_der_b64(provider: KeyProvider) -> str:
+    from cryptography.hazmat.primitives import serialization
+
+    public_key = await provider.public_key()
+    der = public_key.public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return base64.b64encode(der).decode("ascii")

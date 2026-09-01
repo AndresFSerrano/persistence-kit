@@ -1,17 +1,19 @@
-from persistence_kit.security.sealed.envelope import (
+from persistence_kit.security.encrypted.envelope import (
     HYBRID_VERSION,
     NONCE_BYTES,
     VERSION,
-    open_hybrid,
-    open_sealed,
-    seal,
+    decrypt_hybrid,
+    decrypt,
+    encrypt,
 )
+from persistence_kit.security.encrypted.errors import EncryptedPayloadError
 
 __all__ = [
+    "EncryptedPayloadError",
     "HYBRID_VERSION",
     "NONCE_BYTES",
     "VERSION",
-    "open_hybrid",
-    "open_sealed",
-    "seal",
+    "decrypt_hybrid",
+    "decrypt",
+    "encrypt",
 ]

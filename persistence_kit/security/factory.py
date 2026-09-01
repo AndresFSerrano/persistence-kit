@@ -10,6 +10,7 @@ from persistence_kit.settings import (
     DEFAULT_MEMORY_JWT_TTL_SECONDS,
     AuthProvider,
     PersistenceKitSettings,
+    EncryptedType,
 )
 from persistence_kit.security.ports import KeyProvider
 
@@ -157,16 +158,40 @@ def get_token_verifier(settings: PersistenceKitSettings) -> TokenVerifier:
     )
 
 @lru_cache(maxsize=1)
-def _key_provider_cached(kms_key_id: str | None, sealed_private_key: str) -> KeyProvider:
+def _key_provider_cached(
+    provider: str, kms_key_id: str, encrypted_private_key: str
+) -> KeyProvider:
     from persistence_kit.security.providers.encryption_provider import (
         KmsKeyProvider,
         LocalKeyProvider,
+        MemoryKeyProvider,
     )
 
-    if kms_key_id:
+    if provider == EncryptedType.MEMORY.value:
+        return MemoryKeyProvider()
+    if provider == EncryptedType.LOCAL.value:
+        if not encrypted_private_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Falta configuracion ENCRYPTED_PRIVATE_KEY.",
+            )
+        return LocalKeyProvider(encrypted_private_key)
+    if provider == EncryptedType.PRODUCTION.value:
+        if not kms_key_id:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Falta configuracion KMS_KEY_ID.",
+            )
         return KmsKeyProvider(kms_key_id)
-    return LocalKeyProvider(sealed_private_key)
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Proveedor de llaves no soportado: '{provider}'.",
+    )
 
 
-def key_provider(settings: PersistenceKitSettings) -> KeyProvider:
-    return _key_provider_cached(settings.kms_key_id, settings.sealed_private_key)
+def get_key_provider(settings: PersistenceKitSettings) -> KeyProvider:
+    return _key_provider_cached(
+        settings.encrypted_type.value,
+        settings.kms_key_id,
+        settings.encrypted_private_key,
+    )
