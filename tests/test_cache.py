@@ -34,6 +34,26 @@ async def test_memory_cache_expires():
 
 
 @pytest.mark.asyncio
+async def test_memory_cache_set_if_absent_only_writes_once():
+    cache = InMemoryTTLCache()
+
+    assert await cache.set_if_absent("k", 1) is True
+    assert await cache.set_if_absent("k", 2) is False
+    assert await cache.get("k") == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_cache_set_if_absent_writes_again_after_the_ttl():
+    cache = InMemoryTTLCache()
+
+    assert await cache.set_if_absent("k", 1, ttl_seconds=0.05) is True
+    await asyncio.sleep(0.08)
+
+    assert await cache.set_if_absent("k", 2) is True
+    assert await cache.get("k") == 2
+
+
+@pytest.mark.asyncio
 async def test_memory_cache_delete():
     cache = InMemoryTTLCache()
     await cache.set("k", 1)
@@ -76,6 +96,22 @@ async def test_namespace_isolates_keys_on_shared_backend(monkeypatch):
 
     monkeypatch.setenv("CACHE_NAMESPACE", "app_a")
     assert await get_cache("shared").get("k") == 1
+    reset_cache()
+
+
+@pytest.mark.asyncio
+async def test_namespace_isolates_set_if_absent(monkeypatch):
+    monkeypatch.setenv("CACHE_BACKEND", "memory")
+    reset_cache()
+
+    monkeypatch.setenv("CACHE_NAMESPACE", "app_a")
+    assert await get_cache("shared").set_if_absent("k", 1) is True
+
+    monkeypatch.setenv("CACHE_NAMESPACE", "app_b")
+    assert await get_cache("shared").set_if_absent("k", 2) is True
+
+    monkeypatch.setenv("CACHE_NAMESPACE", "app_a")
+    assert await get_cache("shared").set_if_absent("k", 3) is False
     reset_cache()
 
 

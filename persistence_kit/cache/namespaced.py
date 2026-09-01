@@ -24,6 +24,9 @@ class NamespacedCache:
     async def set(self, key: str, value: Any, ttl_seconds: float | None = None) -> None:
         await self._inner.set(self._prefix + key, value, ttl_seconds)
 
+    async def set_if_absent(self, key: str, value: Any, ttl_seconds: float | None = None) -> bool:
+        return await self._inner.set_if_absent(self._prefix + key, value, ttl_seconds)
+
     async def delete(self, key: str) -> None:
         await self._inner.delete(self._prefix + key)
 
