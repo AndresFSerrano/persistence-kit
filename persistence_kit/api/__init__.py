@@ -5,18 +5,21 @@ from .exceptions import (
     BusinessRuleException,
     DatabaseException,
     NotFoundException,
-    SealedPayloadError,
     ValidationException,
 )
 from .rate_limit import InMemoryRateLimiter, build_auth_rate_limit_dependency
 from .route_loader import build_api_router
 
 _LAZY = {
-    "KEY_HEADER": ("persistence_kit.api.sealed_routes", "KEY_HEADER"),
-    "SEALED_FLAG": ("persistence_kit.api.sealed_routes", "SEALED_FLAG"),
-    "build_sealed_route": ("persistence_kit.api.sealed_routes", "build_sealed_route"),
-    "declare_key_header": ("persistence_kit.api.sealed_routes", "declare_key_header"),
-    "sealed": ("persistence_kit.api.sealed_routes", "sealed"),
+    "KEY_HEADER": ("persistence_kit.api.encrypted_routes", "KEY_HEADER"),
+    "ENCRYPTED_FLAG": ("persistence_kit.api.encrypted_routes", "ENCRYPTED_FLAG"),
+    "build_encrypted_route": ("persistence_kit.api.encrypted_routes", "build_encrypted_route"),
+    "declare_key_header": ("persistence_kit.api.encrypted_routes", "declare_key_header"),
+    "encrypted": ("persistence_kit.api.encrypted_routes", "encrypted"),
+    "EncryptedResponseMiddleware": (
+        "persistence_kit.api.encrypted_middleware",
+        "EncryptedResponseMiddleware",
+    ),
 }
 
 __all__ = [
@@ -27,16 +30,16 @@ __all__ = [
     "ValidationException",
     "BusinessRuleException",
     "DatabaseException",
-    "SealedPayloadError",
     "handle_service_errors",
     "handle_repository_errors",
     "build_api_router",
     "InMemoryRateLimiter",
     "build_auth_rate_limit_dependency",
-    "build_sealed_route",
-    "sealed",
+    "build_encrypted_route",
+    "EncryptedResponseMiddleware",
+    "encrypted",
     "declare_key_header",
-    "SEALED_FLAG",
+    "ENCRYPTED_FLAG",
     "KEY_HEADER",
 ]
 
