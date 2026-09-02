@@ -53,7 +53,7 @@ def provider(key) -> KeyProvider:
     return cast(KeyProvider, FakeKeyProvider(key))
 
 
-def test_seal_return_four_keys(envelope):
+def test_encrypt_returns_the_four_envelope_fields(envelope):
 
     assert set(envelope) == {"v", "nonce", "ciphertext", "ts"}
     assert envelope["v"] == VERSION
@@ -61,14 +61,14 @@ def test_seal_return_four_keys(envelope):
     assert abs(envelope["ts"] - time.time()) < 5
 
 
-def test_seal_round_trip(key, payload, envelope):
+def test_encrypt_and_decrypt_round_trip(key, payload, envelope):
 
     return_envelope = decrypt(envelope, key)
 
     assert json.loads(return_envelope) == payload
 
 
-def test_seal_does_not_repeat_envelopes(key, payload): 
+def test_encrypt_never_repeats_a_nonce(key, payload): 
     envelope_one = encrypt(
         json.dumps(payload).encode(),
         key
@@ -82,12 +82,12 @@ def test_seal_does_not_repeat_envelopes(key, payload):
     assert envelope_one["ciphertext"] != envelope_two["ciphertext"]
 
 
-def test_open_seal_reject_non_dict(key):
+def test_decrypt_rejects_something_that_is_not_a_dict(key):
     with pytest.raises(EncryptedPayloadError, match = "Sobre mal formado"):
         decrypt("no soy un dict", key)
 
 
-def test_open_rejects_a_hybrid_envelope(hybrid_envelope, key):
+def test_decrypt_rejects_a_hybrid_envelope(hybrid_envelope, key):
     with pytest.raises(EncryptedPayloadError, match = "Versión de sobre no soportada"):
         decrypt(hybrid_envelope, key)
 
@@ -100,7 +100,7 @@ def test_open_rejects_a_hybrid_envelope(hybrid_envelope, key):
          ("ts", "Sobre mal formado")
         ]
 )
-def test_open_encrypted_rejects_missing_field(envelope, key, field, message):
+def test_decrypt_rejects_a_missing_field(envelope, key, field, message):
     del envelope[field]
     with pytest.raises(EncryptedPayloadError, match = message):
         decrypt(envelope, key)
@@ -110,30 +110,30 @@ def test_open_encrypted_rejects_missing_field(envelope, key, field, message):
     "field, value",
     [("nonce", "no-es-base64!!"), ("ciphertext", "###"), ("ts", "no-soy-un-número")]
 )
-def test_open_encrypted_rejects_unreadable_field(envelope, key, field, value):
+def test_decrypt_rejects_an_unreadable_field(envelope, key, field, value):
     envelope[field] = value
     with pytest.raises(EncryptedPayloadError, match = "Sobre mal formado"):
         decrypt(envelope, key)
 
 
-def test_open_encrypted_long_invalid_nonce(envelope, key):
+def test_decrypt_rejects_a_nonce_of_the_wrong_length(envelope, key):
     envelope["nonce"] = base64.b64encode(b"12345678").decode()
     with pytest.raises(EncryptedPayloadError, match = "Sobre mal formado"):
         decrypt(envelope, key)
 
 @pytest.mark.parametrize("offset", [-MAX_ENVELOPE_AGE_SECONDS -1, MAX_ENVELOPE_AGE_SECONDS +1])
-def test_open_encrypted_expired(envelope, key, offset):
+def test_decrypt_rejects_an_expired_envelope(envelope, key, offset):
     envelope["ts"] = int(time.time()) + offset
     with pytest.raises(EncryptedPayloadError, match = "El sobre esta vencido"):
         decrypt(envelope, key)
 
 
-def test_seal_and_open_with_different_key(envelope):
+def test_decrypt_rejects_a_key_that_does_not_match(envelope):
     with pytest.raises(EncryptedPayloadError, match = "El contenido fue alterado o la llave no corresponde"):
         decrypt(envelope, AESGCM.generate_key(256))
 
 
-def test_open_encrypted_rejects_manipulated_envope(envelope, key):
+def test_decrypt_rejects_a_tampered_ciphertext(envelope, key):
     raw = bytearray(base64.b64decode(envelope["ciphertext"]))
     raw[0] ^= 1
     envelope["ciphertext"] = base64.b64encode(bytes(raw)).decode()
@@ -142,7 +142,7 @@ def test_open_encrypted_rejects_manipulated_envope(envelope, key):
 
 
 @pytest.mark.asyncio
-async def test_open_hybrid_returns_plaintext_and_key(hybrid_envelope, key, payload, provider):
+async def test_decrypt_hybrid_returns_the_plaintext_and_the_key(hybrid_envelope, key, payload, provider):
 
     plaintext, data_key = await decrypt_hybrid(hybrid_envelope, provider)
 
@@ -152,14 +152,14 @@ async def test_open_hybrid_returns_plaintext_and_key(hybrid_envelope, key, paylo
 
 
 @pytest.mark.asyncio
-async def test_open_hybrid_bad_version(envelope, provider):
+async def test_decrypt_hybrid_rejects_a_symmetric_envelope(envelope, provider):
     with pytest.raises(EncryptedPayloadError, match = "Versión de sobre no soportada"):
         await decrypt_hybrid(envelope, provider)
     assert provider.wrapped is None
 
 
 @pytest.mark.asyncio
-async def test_open_hybrid_reject_invalid_field(hybrid_envelope, provider):
+async def test_decrypt_hybrid_rejects_an_unreadable_key(hybrid_envelope, provider):
     hybrid_envelope["key"] = "no-es-base64!!"
     with pytest.raises(EncryptedPayloadError, match = "No se pudo abrir la llave del sobre"):
         await decrypt_hybrid(hybrid_envelope, provider)
@@ -167,7 +167,7 @@ async def test_open_hybrid_reject_invalid_field(hybrid_envelope, provider):
 
 
 @pytest.mark.asyncio
-async def test_open_hybrid_does_not_touch_the_envelope(hybrid_envelope, provider):
+async def test_decrypt_hybrid_does_not_touch_the_envelope(hybrid_envelope, provider):
     original = dict(hybrid_envelope)
 
     await decrypt_hybrid(hybrid_envelope, provider)
