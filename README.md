@@ -224,6 +224,9 @@ handler never sees an envelope, and both pieces are required.
 Two modes. `encrypted()` encrypts the whole body and the whole response.
 `encrypted(fields=[...])` encrypts named fields only, so the rest of the payload
 stays readable; paths may be nested and may cross lists, as in `items[].price`.
+Those paths are validated when the route is mounted — against your Pydantic body
+when there is one — so a typo fails at startup rather than quietly leaving the
+field unencrypted.
 
 By default the private key is generated in memory at startup, so encrypted routes
 work with no configuration. Set `ENCRYPTED_TYPE=local` to load a fixed base64 PEM

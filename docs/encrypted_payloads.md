@@ -33,7 +33,7 @@ the limit is 190 bytes, and it is slow. AES has no such limit and is fast, but
 both sides need the same key, and a browser has no way to agree on one in
 advance. So RSA wraps the 32-byte AES key, and AES carries the payload.
 
-`ts` is the number of seconds since 1970 at the moment of sealing. It is also
+`ts` is the number of seconds since 1970 at the moment of encryption. It is also
 passed to AES-GCM as additional authenticated data, so changing it invalidates
 the envelope.
 
@@ -95,6 +95,14 @@ field that never arrives is skipped, so partial updates keep working. Which fiel
 are required is your handler's model to decide, and it answers with a `422` naming
 them. Outside the `local` stage, a declared field that arrives unencrypted is an
 error.
+
+Paths are checked when the route is mounted, so a typo fails at startup instead of
+letting the field through in the clear. Malformed ones (`items[]`, `client.`, an
+empty segment) always raise; and when the handler declares a Pydantic body, every
+path is also checked against it, one segment at a time, naming the field and the
+model it is missing from. A handler taking a plain `dict` has nothing to check
+against, so only the syntax is. `response_fields` resolves against whatever the
+handler returns, so those go through the syntax check alone.
 
 ## Where the AES key comes from
 
