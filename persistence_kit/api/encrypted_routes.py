@@ -1,13 +1,11 @@
 import base64
 import json
 from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, get_args
 
 from fastapi import Header, Request, Response, status
-from fastapi.exceptions import HTTPException, RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.exceptions import HTTPException
 from fastapi.routing import APIRoute
-from fastapi.encoders import jsonable_encoder
 
 from persistence_kit.cache import CacheBackend, CacheSettings, get_cache
 from persistence_kit.settings import PersistenceKitSettings
@@ -74,17 +72,17 @@ def encrypted(
         fields: list[str] | None = None,
         response_fields: list[str] | None = None
 ) -> dict:
-    marca: dict[str, object] = {ENCRYPTED_FLAG: True}
+    mark: dict[str, object] = {ENCRYPTED_FLAG: True}
     if fields:
-        marca[ENCRYPTED_FIELDS] = fields
+        mark[ENCRYPTED_FIELDS] = fields
     if response_fields:
-        marca[ENCRYPTED_RESPONSE_FIELDS] = response_fields
+        mark[ENCRYPTED_RESPONSE_FIELDS] = response_fields
     if with_body and not fields:
-        marca["requestBody"] = {
+        mark["requestBody"] = {
             "required": True,
             "content": {"application/json": {"schema": _ENVELOPE_SCHEMA}},
         }
-    return marca
+    return mark
 
 
 async def declare_key_header(
@@ -98,10 +96,10 @@ async def declare_key_header(
         ),
     ] = None,
 ) -> None:
-    """Solo existe para que Swagger muestre el campo de la cabecera.
+    """Declares the key header so Swagger shows the field.
 
-    La lee `_key_from_header` desde la petición cruda, antes de que corran las
-    dependencias; esta no valida ni devuelve nada.
+    ``_key_from_header`` reads it from the raw request, before the dependencies
+    run; this one neither validates nor returns anything.
     """
 
 def _require_the_middleware(app) -> None:
@@ -129,6 +127,9 @@ def _provider_for(settings):
 
     return get_key_provider(settings)
 
+def _prepare_key_provider(settings: PersistenceKitSettings) -> None:
+    _provider_for(settings)
+
 def _require_a_shared_cache(settings: PersistenceKitSettings) -> None:
     if settings.is_local_stage:
         return
@@ -141,10 +142,46 @@ def _require_a_shared_cache(settings: PersistenceKitSettings) -> None:
 
 async def _reject_if_replayed(nonce: str) -> None:
     cache = get_cache("encrypted")
-    if not await cache.set_if_absent(nonce, True, ttl_seconds=MAX_ENVELOPE_AGE_SECONDS):
+    if not await cache.set_if_absent(nonce, True, ttl_seconds=2 * MAX_ENVELOPE_AGE_SECONDS):
         raise EncryptedPayloadError("El sobre ya fue usado")
 
-def _locate_all(payload: dict, path: str) -> list[tuple[dict, str]]:
+def _validate_path(path: str) -> None:
+    key, dot, rest = path.partition(".")
+    if not key:
+        raise RuntimeError(f"El campo '{path}' tiene un segmento vacio.")
+    if key == "[]":
+        raise RuntimeError(f"El campo '{path}' tiene una lista sin nombre.")
+    if "[]" in key and not key.endswith("[]"):
+        raise RuntimeError(f"El campo '{path}' pone [] en medio de un nombre.")
+    if key.endswith("[]") and not rest:
+        raise RuntimeError(f"El campo '{path}' apunta a una lista, no a un campo de sus objetos.")
+    if dot and not rest:
+        raise RuntimeError(f"El campo '{path}' tiene un segmento vacio.")
+    if rest:
+        _validate_path(rest)
+
+def _model_of(annotation):
+    if hasattr(annotation, "model_fields"):
+        return annotation
+    for arg in get_args(annotation):
+        found = _model_of(arg)
+        if found is not None:
+            return found
+    return None
+
+def _validate_against_model(path: str, model: type) -> None:
+    key, _, rest = path.partition(".")
+    name = key.removesuffix("[]")
+    fields = getattr(model, "model_fields", None)
+    if fields is None:
+        return
+    if name not in fields:
+        raise RuntimeError(f"El campo '{name}' no existe en {model.__name__}.")
+    if rest:
+        _validate_against_model(rest, _model_of(fields[name].annotation))
+
+
+def locate_all(payload: dict, path: str) -> list[tuple[dict, str]]:
     key, _, rest = path.partition(".")
     if key.endswith("[]"):
         items = payload.get(key[:-2])
@@ -154,14 +191,14 @@ def _locate_all(payload: dict, path: str) -> list[tuple[dict, str]]:
             pair
             for item in items
             if isinstance(item, dict)
-            for pair in _locate_all(item, rest)
+            for pair in locate_all(item, rest)
         ]
     if not rest:
         return [(payload, key)]
     child = payload.get(key)
     if not isinstance(child, dict):
         return []
-    return _locate_all(child, rest)
+    return locate_all(child, rest)
 
 def _open_fields(payload: dict, fields: list[str], data_key: bytes, settings: PersistenceKitSettings) -> tuple[dict, list[str]]:
     if not isinstance(payload, dict):
@@ -170,37 +207,16 @@ def _open_fields(payload: dict, fields: list[str], data_key: bytes, settings: Pe
         raise EncryptedPayloadError("Esta ruta cifra campos sueltos, no el cuerpo entero.")
     nonces: list[str] = []
     for field in fields:
-        for container, key in _locate_all(payload, field):
+        for container, key in locate_all(payload, field):
             if key not in container:
                 continue
-            valor = container[key]
-            if isinstance(valor, dict) and "ciphertext" in valor:
-                container[key] = json.loads(decrypt(valor, data_key))
-                nonces.append(valor["nonce"])
+            value = container[key]
+            if isinstance(value, dict) and "ciphertext" in value:
+                container[key] = json.loads(decrypt(value, data_key))
+                nonces.append(value["nonce"])
             elif not settings.is_local_stage:
                 raise EncryptedPayloadError(f"El campo {field} debe estar cifrado")
     return payload, nonces
-
-def _encrypt_fields(payload: dict | list, fields: list[str], data_key: bytes) -> dict | list:
-    if isinstance(payload, list):
-        return [_encrypt_fields(item, fields, data_key) for item in payload]
-    if not isinstance(payload, dict):
-        raise EncryptedPayloadError("La respuesta debe ser un objeto o una lista de objetos")
-    for field in fields:
-        for container, key in _locate_all(payload, field):
-            if key in container:
-                container[key] = encrypt(json.dumps(container[key]).encode(), data_key)
-    return payload
-
-
-def _encrypted_response(payload, respuesta: Response) -> JSONResponse:
-    nueva = JSONResponse(payload, status_code=respuesta.status_code)
-    nueva.raw_headers += [
-        (name, value)
-        for name, value in respuesta.raw_headers
-        if name not in (b"content-length", b"content-type")
-    ]
-    return nueva
 
 
 async def _open_body(body: bytes, settings: PersistenceKitSettings) -> tuple[bytes | None, bytes | None]:
@@ -222,9 +238,22 @@ async def _key_from_header(request: Request, settings) -> bytes | None:
         raise EncryptedPayloadError(f"Falta la cabecera {KEY_HEADER}.")
     try:
         wrapped = base64.b64decode(raw, validate=True)
-        return await _provider_for(settings).unwrap_key(wrapped)
-    except (TypeError, ValueError, RuntimeError) as exc:
+    except (TypeError, ValueError) as exc:
         raise EncryptedPayloadError("No se pudo abrir la llave de la cabecera.") from exc
+    return await _provider_for(settings).unwrap_key(wrapped)
+
+def _validate_fields(route: APIRoute, fields, response_fields) -> None:
+    body_model = None
+    if route.body_field is not None:
+        body_model = _model_of(route.body_field.field_info.annotation)
+
+    for path in fields or ():
+        _validate_path(path)
+        if body_model is not None:
+            _validate_against_model(path, body_model)
+
+    for path in response_fields or ():
+        _validate_path(path)
 
 
 def build_encrypted_route(settings_dep: Callable) -> type[APIRoute]:
@@ -233,12 +262,15 @@ def build_encrypted_route(settings_dep: Callable) -> type[APIRoute]:
 
         def get_route_handler(self):
             original = super().get_route_handler()
-            marca = self.openapi_extra or {}
-            if not marca.get(ENCRYPTED_FLAG):
+            mark = self.openapi_extra or {}
+            if not mark.get(ENCRYPTED_FLAG):
                 return original
-            _require_a_shared_cache(settings_dep())
-            fields = marca.get(ENCRYPTED_FIELDS)
-            response_fields = marca.get(ENCRYPTED_RESPONSE_FIELDS)
+            settings = settings_dep()
+            _require_a_shared_cache(settings)
+            _prepare_key_provider(settings)
+            fields = mark.get(ENCRYPTED_FIELDS)
+            response_fields = mark.get(ENCRYPTED_RESPONSE_FIELDS)
+            _validate_fields(self, fields, response_fields)
 
             async def encrypted_handler(request: Request) -> Response:
                 settings = settings_dep()
@@ -271,15 +303,15 @@ def build_encrypted_route(settings_dep: Callable) -> type[APIRoute]:
                     setattr(state, KEY_STATE, data_key)
                     setattr(state, RESPONSE_FIELDS_STATE, response_fields)
 
-                respuesta = await original(request)
+                response = await original(request)
 
-                if data_key and not hasattr(respuesta, "body"):
+                if data_key and not hasattr(response, "body"):
                     raise RuntimeError(
-                        f"Una ruta cifrada no puede devolver {type(respuesta).__name__}: "
+                        f"Una ruta cifrada no puede devolver {type(response).__name__}: "
                         "el contenido en streaming no se puede cifrar."
                     )
 
-                return respuesta
+                return response
 
             return encrypted_handler
 
