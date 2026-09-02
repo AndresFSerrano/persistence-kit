@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa, ed25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from persistence_kit.security.encrypted.errors import EncryptedPayloadError
 from persistence_kit.security.ports import public_key_der_b64
 from persistence_kit.security.providers.encryption_provider import (
     LocalKeyProvider,
@@ -47,10 +48,10 @@ def kms_client(monkeypatch):
 
 @pytest.fixture
 def boom():
-    def make(operation_name: str):
+    def make(operation_name: str, code: str = "AccessDeniedException"):
         def raise_client_error(**kwargs):
             raise ClientError(
-                {"Error": {"Code": "AccessDeniedException", "Message": "without permissions"}},
+                {"Error": {"Code": code, "Message": "no sirve"}},
                 operation_name,
             )
 
@@ -117,7 +118,15 @@ async def test_public_key_der_b64_returns_the_public_key(rsa_key, provider):
 
 @pytest.mark.asyncio
 async def  test_unwrap_key_fails_with_garbage(provider):
-    with pytest.raises(ValueError):
+    with pytest.raises(EncryptedPayloadError, match = "No se pudo abrir la llave del sobre"):
+        await provider.unwrap_key(os.urandom(256))
+
+
+@pytest.mark.asyncio
+async def test_unwrap_key_reports_a_bad_pem_as_a_server_error():
+    provider = LocalKeyProvider("no-es-una-llave")
+
+    with pytest.raises(RuntimeError, match = "ENCRYPTED_PRIVATE_KEY"):
         await provider.unwrap_key(os.urandom(256))
 
 
@@ -135,7 +144,7 @@ async def test_memory_provider_unwraps_what_its_public_key_wrapped(key):
 async def test_memory_provider_generates_a_key_per_instance(key):
     wrapped = (await MemoryKeyProvider().public_key()).encrypt(key, OAEP_PADDING)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(EncryptedPayloadError):
         await MemoryKeyProvider().unwrap_key(wrapped)
 
 
@@ -164,6 +173,21 @@ async def test_unwrap_key_translates_client_error(kms_client, boom):
     provider = mod.KmsKeyProvider("key-1")
 
     with pytest.raises(RuntimeError, match = "El KMS no pudo desenvolver la llave") as err:
+        await provider.unwrap_key(b"encrypted")
+
+    assert not isinstance(err.value, EncryptedPayloadError)
+    assert isinstance(err.value.__cause__, ClientError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code", ["InvalidCiphertextException", "IncorrectKeyException"], ids=["invalido", "otra_llave"]
+)
+async def test_unwrap_key_blames_the_client_for_a_key_kms_cannot_open(kms_client, boom, code):
+    kms_client.decrypt = boom("Decrypt", code)
+    provider = mod.KmsKeyProvider("key-1")
+
+    with pytest.raises(EncryptedPayloadError, match = "No se pudo abrir la llave del sobre") as err:
         await provider.unwrap_key(b"encrypted")
 
     assert isinstance(err.value.__cause__, ClientError)

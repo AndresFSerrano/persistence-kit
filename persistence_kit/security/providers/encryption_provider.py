@@ -5,11 +5,14 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from starlette.concurrency import run_in_threadpool
 
+from persistence_kit.security.encrypted.errors import EncryptedPayloadError
+
 _OAEP = padding.OAEP(
     mgf=padding.MGF1(hashes.SHA256()),
     algorithm=hashes.SHA256(),
     label=None,
 )
+_CLIENT_CODES = frozenset({"InvalidCiphertextException", "IncorrectKeyException"})
 
 
 class MemoryKeyProvider:
@@ -18,7 +21,10 @@ class MemoryKeyProvider:
         self._key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
     async def unwrap_key(self, wrapped: bytes) -> bytes:
-        return await run_in_threadpool(self._key.decrypt, wrapped, _OAEP)
+        try:
+            return await run_in_threadpool(self._key.decrypt, wrapped, _OAEP)
+        except ValueError as exc:
+            raise EncryptedPayloadError("No se pudo abrir la llave del sobre") from exc
 
     async def public_key(self) -> RSAPublicKey:
         return self._key.public_key()
@@ -32,15 +38,22 @@ class LocalKeyProvider:
 
     def _private_key(self) -> RSAPrivateKey:
         if self._key is None:
-            pem = base64.b64decode(self._private_key_b64)
-            key = serialization.load_pem_private_key(pem, password=None)
+            try:
+                pem = base64.b64decode(self._private_key_b64)
+                key = serialization.load_pem_private_key(pem, password=None)
+            except ValueError as exc:
+                raise RuntimeError("ENCRYPTED_PRIVATE_KEY no es una llave RSA.") from exc
             if not isinstance(key, RSAPrivateKey):
                 raise RuntimeError("ENCRYPTED_PRIVATE_KEY no es una llave RSA.")
             self._key = key
         return self._key
 
     async def unwrap_key(self, wrapped: bytes) -> bytes:
-        return await run_in_threadpool(self._private_key().decrypt, wrapped, _OAEP)
+        rsa_key = self._private_key()
+        try:
+            return await run_in_threadpool(rsa_key.decrypt, wrapped, _OAEP)
+        except ValueError as exc:
+            raise EncryptedPayloadError("No se pudo abrir la llave del sobre") from exc
 
     async def public_key(self) -> RSAPublicKey:
         return self._private_key().public_key()
@@ -71,6 +84,8 @@ class KmsKeyProvider:
         try:
             response = await run_in_threadpool(_decrypt)
         except self._client_error as exc:
+            if exc.response["Error"]["Code"] in _CLIENT_CODES:
+                raise EncryptedPayloadError("No se pudo abrir la llave del sobre") from exc
             raise RuntimeError("El KMS no pudo desenvolver la llave") from exc
         return response["Plaintext"]
 
