@@ -526,16 +526,8 @@ class MemorySecurityProvider(IdentityProvider):
         normalized_roles = tuple(role.strip().lower() for role in roles if role.strip())
         with self._lock:
             all_users = tuple(
-                RegisteredUserResult(
-                    username=user.username,
-                    email=user.email,
-                    given_name=user.given_name,
-                    family_name=user.family_name,
-                    created_by=user.created_by,
-                    enabled=user.enabled,
-                    roles=user.roles,
-                )
-                for user in sorted(self._users_by_username.values(), key=lambda item: item.username)
+                user
+                for user in self._all_users_sorted()
                 if not normalized_roles or any(role in user.roles for role in normalized_roles)
             )
         total = len(all_users)
@@ -546,6 +538,24 @@ class MemorySecurityProvider(IdentityProvider):
             page_size=page_size,
             total=total,
             users=all_users[start:end],
+        )
+
+    async def list_all_users(self) -> tuple[RegisteredUserResult, ...]:
+        with self._lock:
+            return self._all_users_sorted()
+
+    def _all_users_sorted(self) -> tuple[RegisteredUserResult, ...]:
+        return tuple(
+            RegisteredUserResult(
+                username=user.username,
+                email=user.email,
+                given_name=user.given_name,
+                family_name=user.family_name,
+                created_by=user.created_by,
+                enabled=user.enabled,
+                roles=user.roles,
+            )
+            for user in sorted(self._users_by_username.values(), key=lambda item: item.username)
         )
 
     def reset(self) -> None:

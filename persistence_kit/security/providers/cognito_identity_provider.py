@@ -635,28 +635,8 @@ class CognitoIdentityProvider(IdentityProvider):
         page_size: int,
         roles: tuple[str, ...] = (),
     ) -> RegisteredUsersPageResult:
-        if not self._user_pool_id:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Falta configuración COGNITO_USER_POOL_ID.",
-            )
         normalized_roles = tuple(role.strip().lower() for role in roles if role.strip())
-
-        try:
-            all_users = await self._get_all_users_cached()
-        except HTTPException:
-            raise
-        except Exception as exc:
-            code, message = self._extract_cognito_error_data(exc)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=self._build_error_detail(
-                    code="COGNITO_LIST_USERS_FAILED",
-                    message="No fue posible listar los usuarios.",
-                    cognito_code=code,
-                    cognito_message=message,
-                ),
-            ) from exc
+        all_users = await self._require_all_users_cached()
 
         if normalized_roles:
             filtered = tuple(
@@ -675,6 +655,31 @@ class CognitoIdentityProvider(IdentityProvider):
             total=total,
             users=filtered[start:end],
         )
+
+    async def list_all_users(self) -> tuple[RegisteredUserResult, ...]:
+        return await self._require_all_users_cached()
+
+    async def _require_all_users_cached(self) -> tuple[RegisteredUserResult, ...]:
+        if not self._user_pool_id:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Falta configuración COGNITO_USER_POOL_ID.",
+            )
+        try:
+            return await self._get_all_users_cached()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            code, message = self._extract_cognito_error_data(exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=self._build_error_detail(
+                    code="COGNITO_LIST_USERS_FAILED",
+                    message="No fue posible listar los usuarios.",
+                    cognito_code=code,
+                    cognito_message=message,
+                ),
+            ) from exc
 
     def _list_users_cache_key(self) -> str:
         return f"cognito_identity:list_users:{self._user_pool_id}"

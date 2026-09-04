@@ -257,6 +257,22 @@ async def test_list_users_filters_by_roles():
 
 
 @pytest.mark.asyncio
+async def test_list_all_users_ignores_roles_and_returns_everyone_sorted():
+    provider = _build_provider()
+    await provider.sign_up_user(email="programador.almacen@udea.edu.co", password="password123")
+    await provider.sign_up_user(email="auxiliar.ucara@udea.edu.co", password="password123")
+    await provider.assign_user_roles(
+        username="programador.almacen",
+        roles=(Role.PROGRAMADOR_ALMACEN,),
+    )
+    await provider.assign_user_roles(username="auxiliar.ucara", roles=(Role.AUXILIAR_UCARA,))
+
+    all_users = await provider.list_all_users()
+
+    assert [user.username for user in all_users] == ["auxiliar.ucara", "programador.almacen"]
+
+
+@pytest.mark.asyncio
 async def test_seed_role_users_creates_one_user_per_role():
     provider = MemorySecurityProvider(
         jwt_secret="test-secret-with-32-characters-minimum",

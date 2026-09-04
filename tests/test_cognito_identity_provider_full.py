@@ -1480,3 +1480,53 @@ async def test_list_users_serves_stale_within_swr_and_detects_change_in_backgrou
     entry = await cache.get(provider._list_users_cache_key())
     updated_users = provider._deserialize_users(entry["users"])
     assert updated_users[0].roles == ("admin_general", "auxiliar_almacen")
+
+
+@pytest.mark.asyncio
+async def test_list_all_users_returns_every_user_unpaginated(monkeypatch):
+    class FakeClient:
+        def list_users(self, **kwargs):
+            return {
+                "Users": [
+                    {
+                        "Username": f"user{i}",
+                        "Enabled": True,
+                        "Attributes": [{"Name": "custom:created_by", "Value": "jhon"}],
+                    }
+                    for i in range(3)
+                ]
+            }
+
+        def admin_list_groups_for_user(self, **kwargs):
+            return {"Groups": [{"GroupName": "auxiliar_ucara"}]}
+
+    class FakeBoto3:
+        @staticmethod
+        def client(service_name, region_name):
+            return FakeClient()
+
+    monkeypatch.setattr(mod, "boto3", FakeBoto3)
+    provider = mod.CognitoIdentityProvider(region="us-east-1", user_pool_id="pool-1")
+
+    all_users = await provider.list_all_users()
+
+    assert len(all_users) == 3
+    assert all(user.created_by == "jhon" for user in all_users)
+    assert all(user.roles == ("auxiliar_ucara",) for user in all_users)
+
+
+@pytest.mark.asyncio
+async def test_list_all_users_requires_user_pool_id(monkeypatch):
+    class FakeBoto3:
+        @staticmethod
+        def client(service_name, region_name):
+            return object()
+
+    monkeypatch.setattr(mod, "boto3", FakeBoto3)
+    provider = mod.CognitoIdentityProvider(region="us-east-1", user_pool_id=None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await provider.list_all_users()
+
+    assert exc_info.value.status_code == 500
+    assert "COGNITO_USER_POOL_ID" in exc_info.value.detail
