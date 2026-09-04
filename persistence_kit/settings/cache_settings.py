@@ -12,5 +12,6 @@ class CacheBackend(str, Enum):
 class CacheSettings(BaseSettings):
     cache_backend: CacheBackend = CacheBackend.MEMORY
     cache_namespace: str = ""
+    cache_dynamodb_table_prefix: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

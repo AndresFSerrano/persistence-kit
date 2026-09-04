@@ -29,15 +29,22 @@ def test_get_identity_provider_returns_cached_instance(monkeypatch):
     second = mod.get_identity_provider(settings)
 
     assert first is second
-    assert captured == [
-        {
-            "region": "us-east-1",
-            "user_pool_client_id": "client-1",
-            "user_pool_client_secret": "secret-1",
-            "user_pool_id": "pool-1",
-            "auto_verify_email": True,
-        }
-    ]
+    assert len(captured) == 1
+    kwargs = captured[0]
+    cache = kwargs.pop("cache")
+    from persistence_kit.cache.contracts import Cache
+
+    assert isinstance(cache, Cache)
+    assert kwargs == {
+        "region": "us-east-1",
+        "user_pool_client_id": "client-1",
+        "user_pool_client_secret": "secret-1",
+        "user_pool_id": "pool-1",
+        "auto_verify_email": True,
+        "list_users_cache_ttl_seconds": settings.cognito_list_users_cache_ttl_seconds,
+        "list_users_cache_swr_seconds": settings.cognito_list_users_cache_swr_seconds,
+        "list_users_concurrency": settings.cognito_list_users_concurrency,
+    }
 
 
 def test_get_identity_provider_uses_configured_memory_seed_roles():
@@ -101,6 +108,9 @@ def test_identity_provider_cached_rejects_unsupported_provider():
             None,
             None,
             None,
+            5.0,
+            25.0,
+            20,
             mod.MEMORY_JWT_SECRET,
             mod.MEMORY_JWT_ISSUER,
             mod.MEMORY_JWT_TTL_SECONDS,

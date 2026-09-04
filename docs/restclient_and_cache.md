@@ -99,7 +99,7 @@ A generic key-value cache with optional TTL. The backend is chosen by the
 | --- | --- | --- | --- |
 | `memory` (default) | `InMemoryTTLCache` | lazy on read | per-process, lost on restart |
 | `mongo` | `MongoCache` | native TTL index on `expiresAt` | reuses `MONGO_DSN` / `MONGO_DB` |
-| `dynamodb` | `DynamoCache` | native TTL attribute | planned (not yet implemented) |
+| `dynamodb` | `DynamoCache` | native TTL attribute | single shared table (`{CACHE_DYNAMODB_TABLE_PREFIX}cache`), isolated by name via `NamespacedCache`; own prefix, decoupled from `DYNAMODB_TABLE_PREFIX` (repositories) |
 
 ```python
 from persistence_kit.cache import get_cache
