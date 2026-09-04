@@ -1,12 +1,16 @@
+import asyncio
 import base64
 import hashlib
 import hmac
+import logging
+import threading
 from enum import Enum
 
 import pytest
 from fastapi import HTTPException
 
 import persistence_kit.security.providers.cognito_identity_provider as mod
+from persistence_kit.cache.memory import InMemoryTTLCache
 
 
 class Role(str, Enum):
@@ -1345,3 +1349,134 @@ async def test_delete_roles_ignores_missing_group_and_deletes_existing_one(monke
     await provider.delete_roles(role_codes=("coord_bienestar", "missing_role"))
 
     assert captured["deleted"] == ["coord_bienestar"]
+
+
+@pytest.mark.asyncio
+async def test_list_users_resolves_groups_concurrently_not_sequentially(monkeypatch):
+    """Con 5 usuarios y una barrera de 5 partes, admin_list_groups_for_user solo
+    puede completar si las 5 llamadas estan en vuelo al mismo tiempo. Si el
+    fetch fuera secuencial (un usuario a la vez), la barrera nunca se libera y
+    la llamada expira."""
+    barrier = threading.Barrier(5)
+
+    class FakeClient:
+        def list_users(self, **kwargs):
+            return {
+                "Users": [
+                    {"Username": f"user{i}", "Enabled": True, "Attributes": []}
+                    for i in range(5)
+                ]
+            }
+
+        def admin_list_groups_for_user(self, **kwargs):
+            barrier.wait(timeout=2)
+            return {"Groups": []}
+
+    class FakeBoto3:
+        @staticmethod
+        def client(service_name, region_name):
+            return FakeClient()
+
+    monkeypatch.setattr(mod, "boto3", FakeBoto3)
+    provider = mod.CognitoIdentityProvider(region="us-east-1", user_pool_id="pool-1")
+
+    page = await provider.list_users(page=1, page_size=10)
+
+    assert page.total == 5
+
+
+@pytest.mark.asyncio
+async def test_list_users_serves_from_cache_within_ttl_without_hitting_cognito_again(
+    monkeypatch,
+):
+    captured = {"list_calls": 0, "group_calls": 0}
+
+    class FakeClient:
+        def list_users(self, **kwargs):
+            captured["list_calls"] += 1
+            return {"Users": [{"Username": "docente", "Enabled": True, "Attributes": []}]}
+
+        def admin_list_groups_for_user(self, **kwargs):
+            captured["group_calls"] += 1
+            return {"Groups": [{"GroupName": "admin_general"}]}
+
+    class FakeBoto3:
+        @staticmethod
+        def client(service_name, region_name):
+            return FakeClient()
+
+    monkeypatch.setattr(mod, "boto3", FakeBoto3)
+    provider = mod.CognitoIdentityProvider(
+        region="us-east-1",
+        user_pool_id="pool-1",
+        cache=InMemoryTTLCache(),
+        list_users_cache_ttl_seconds=5.0,
+        list_users_cache_swr_seconds=25.0,
+    )
+
+    first = await provider.list_users(page=1, page_size=20)
+    second = await provider.list_users(page=1, page_size=20)
+
+    assert captured["list_calls"] == 1
+    assert captured["group_calls"] == 1
+    assert first.users == second.users
+    assert second.users[0].roles == ("admin_general",)
+
+
+@pytest.mark.asyncio
+async def test_list_users_serves_stale_within_swr_and_detects_change_in_background(
+    monkeypatch, caplog,
+):
+    """Fuera del TTL fresco pero dentro de la ventana SWR: la respuesta sale
+    del cache de inmediato (sin bloquear al caller) y una revalidacion en
+    background detecta el cambio real (por hash) y actualiza el cache."""
+    captured = {"list_calls": 0}
+    live_groups = {"docente": ["admin_general"]}
+
+    class FakeClient:
+        def list_users(self, **kwargs):
+            captured["list_calls"] += 1
+            return {"Users": [{"Username": "docente", "Enabled": True, "Attributes": []}]}
+
+        def admin_list_groups_for_user(self, **kwargs):
+            return {"Groups": [{"GroupName": name} for name in live_groups["docente"]]}
+
+    class FakeBoto3:
+        @staticmethod
+        def client(service_name, region_name):
+            return FakeClient()
+
+    monkeypatch.setattr(mod, "boto3", FakeBoto3)
+    cache = InMemoryTTLCache()
+    provider = mod.CognitoIdentityProvider(
+        region="us-east-1",
+        user_pool_id="pool-1",
+        cache=cache,
+        list_users_cache_ttl_seconds=0.0,
+        list_users_cache_swr_seconds=5.0,
+    )
+
+    caplog.set_level(logging.INFO, logger=mod.logger.name)
+
+    first = await provider.list_users(page=1, page_size=20)
+    assert first.users[0].roles == ("admin_general",)
+    assert captured["list_calls"] == 1
+
+    live_groups["docente"] = ["admin_general", "auxiliar_almacen"]
+
+    second = await provider.list_users(page=1, page_size=20)
+    assert second.users[0].roles == ("admin_general",)
+
+    revalidation_key = provider._list_users_cache_key()
+    for _ in range(50):
+        if revalidation_key not in provider._list_users_inflight:
+            break
+        await asyncio.sleep(0.01)
+
+    assert revalidation_key not in provider._list_users_inflight
+    assert captured["list_calls"] == 2
+    assert "Cambio detectado" in caplog.text
+
+    entry = await cache.get(provider._list_users_cache_key())
+    updated_users = provider._deserialize_users(entry["users"])
+    assert updated_users[0].roles == ("admin_general", "auxiliar_almacen")

@@ -68,6 +68,9 @@ class PersistenceKitSettings(RepoSettings):
     cognito_app_client_id: str | None = None
     cognito_app_client_secret: str | None = None
     cognito_allowed_email_domain: str = "udea.edu.co"
+    cognito_list_users_cache_ttl_seconds: float = 5.0
+    cognito_list_users_cache_swr_seconds: float = 25.0
+    cognito_list_users_concurrency: int = 20
 
     # Service
     service_name: str = "api"
