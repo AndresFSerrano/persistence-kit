@@ -452,7 +452,7 @@ poetry install --with dev --all-extras
 poetry run pytest -q
 ```
 
-Current baseline: **515 tests passing** (version 3.10.0). Async tests use
+Current baseline: **536 tests passing** (version 3.12.0). Async tests use
 `pytest-asyncio` in strict mode, so each one carries `@pytest.mark.asyncio`.
 
 `tests/test_capabilities.py` guards the lazy-import promise: it fails if merely
