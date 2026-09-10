@@ -66,6 +66,9 @@ def _identity_provider_cached(
     cognito_user_pool_client_id: str | None,
     cognito_user_pool_client_secret: str | None,
     cognito_user_pool_id: str | None,
+    cognito_list_users_cache_ttl_seconds: float,
+    cognito_list_users_cache_swr_seconds: float,
+    cognito_list_users_concurrency: int,
     memory_jwt_secret: str,
     memory_jwt_issuer: str,
     memory_jwt_ttl_seconds: int,
@@ -85,6 +88,7 @@ def _identity_provider_cached(
             memory_seed_created_by,
         )
     if provider == AuthProvider.COGNITO.value:
+        from persistence_kit.cache.factory import get_cache
         from persistence_kit.security.providers.cognito_identity_provider import CognitoIdentityProvider
 
         return CognitoIdentityProvider(
@@ -93,6 +97,10 @@ def _identity_provider_cached(
             user_pool_client_secret=cognito_user_pool_client_secret,
             user_pool_id=cognito_user_pool_id,
             auto_verify_email=True,
+            cache=get_cache("cognito_identity"),
+            list_users_cache_ttl_seconds=cognito_list_users_cache_ttl_seconds,
+            list_users_cache_swr_seconds=cognito_list_users_cache_swr_seconds,
+            list_users_concurrency=cognito_list_users_concurrency,
         )
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -107,6 +115,9 @@ def get_identity_provider(settings: PersistenceKitSettings) -> IdentityProvider:
         settings.cognito_app_client_id,
         settings.cognito_app_client_secret,
         settings.cognito_user_pool_id,
+        settings.cognito_list_users_cache_ttl_seconds,
+        settings.cognito_list_users_cache_swr_seconds,
+        settings.cognito_list_users_concurrency,
         settings.memory_jwt_secret,
         settings.memory_jwt_issuer,
         settings.memory_jwt_ttl_seconds,

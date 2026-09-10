@@ -14,6 +14,14 @@ def _mongo_collection(dsn: str, dbname: str, name: str):
 
 
 @lru_cache
+def _dynamodb_cache_table(prefix: str, region: str):
+    import boto3
+
+    table_name = f"{prefix}cache" if prefix else "cache"
+    return boto3.resource("dynamodb", region_name=region).Table(table_name)
+
+
+@lru_cache
 def _cache_cached(name: str, backend: CacheBackend) -> Cache:
     if backend is CacheBackend.MEMORY:
         from persistence_kit.cache.memory import InMemoryTTLCache
@@ -29,7 +37,14 @@ def _cache_cached(name: str, backend: CacheBackend) -> Cache:
         return MongoCache(collection)
 
     if backend is CacheBackend.DYNAMODB:
-        raise NotImplementedError("DynamoCache pendiente (paso 2 del plan de cache).")
+        from persistence_kit.cache.dynamodb import DynamoCache
+        from persistence_kit.cache.namespaced import NamespacedCache
+        from persistence_kit.settings.repo_settings import RepoSettings
+
+        cache_settings = CacheSettings()
+        region = RepoSettings().dynamodb_region
+        table = _dynamodb_cache_table(cache_settings.cache_dynamodb_table_prefix, region)
+        return NamespacedCache(DynamoCache(table), name)
 
     raise ValueError(f"Cache backend no soportado: {backend}")
 
@@ -53,3 +68,4 @@ def get_cache(name: str = "default") -> Cache:
 def reset_cache() -> None:
     _cache_cached.cache_clear()
     _mongo_collection.cache_clear()
+    _dynamodb_cache_table.cache_clear()

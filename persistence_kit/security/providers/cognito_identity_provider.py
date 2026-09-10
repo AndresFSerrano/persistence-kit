@@ -1,12 +1,17 @@
 from typing import Any
+import asyncio
 import base64
 import hashlib
 import hmac
+import json
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 
+from persistence_kit.cache.contracts import Cache
 from persistence_kit.security.ports import IdentityProvider
 from persistence_kit.security.registration import (
     LoginResult,
@@ -43,6 +48,10 @@ class CognitoIdentityProvider(IdentityProvider):
         user_pool_client_secret: str | None = None,
         user_pool_id: str | None = None,
         auto_verify_email: bool = False,
+        cache: Cache | None = None,
+        list_users_cache_ttl_seconds: float = 5.0,
+        list_users_cache_swr_seconds: float = 25.0,
+        list_users_concurrency: int = 20,
     ) -> None:
         if boto3 is None:
             raise HTTPException(
@@ -55,6 +64,11 @@ class CognitoIdentityProvider(IdentityProvider):
         self._user_pool_id = user_pool_id
         self._auto_verify_email = auto_verify_email
         self._client = boto3.client("cognito-idp", region_name=self._region)
+        self._cache = cache
+        self._list_users_ttl = list_users_cache_ttl_seconds
+        self._list_users_swr = list_users_cache_swr_seconds
+        self._list_users_concurrency = max(1, list_users_concurrency)
+        self._list_users_inflight: set[str] = set()
 
     def _build_secret_hash(self, username: str) -> str | None:
         if not self._user_pool_client_secret or not self._user_pool_client_id:
@@ -621,68 +635,38 @@ class CognitoIdentityProvider(IdentityProvider):
         page_size: int,
         roles: tuple[str, ...] = (),
     ) -> RegisteredUsersPageResult:
+        normalized_roles = tuple(role.strip().lower() for role in roles if role.strip())
+        all_users = await self._require_all_users_cached()
+
+        if normalized_roles:
+            filtered = tuple(
+                user for user in all_users
+                if any(role in user.roles for role in normalized_roles)
+            )
+        else:
+            filtered = all_users
+
+        total = len(filtered)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return RegisteredUsersPageResult(
+            page=page,
+            page_size=page_size,
+            total=total,
+            users=filtered[start:end],
+        )
+
+    async def list_all_users(self) -> tuple[RegisteredUserResult, ...]:
+        return await self._require_all_users_cached()
+
+    async def _require_all_users_cached(self) -> tuple[RegisteredUserResult, ...]:
         if not self._user_pool_id:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Falta configuración COGNITO_USER_POOL_ID.",
             )
-        normalized_roles = tuple(role.strip().lower() for role in roles if role.strip())
-
-        def _list_all() -> RegisteredUsersPageResult:
-            out: list[RegisteredUserResult] = []
-            pagination_token: str | None = None
-            while True:
-                params: dict[str, Any] = {
-                    "UserPoolId": self._user_pool_id,
-                    "Limit": 60,
-                }
-                if pagination_token:
-                    params["PaginationToken"] = pagination_token
-
-                response = self._client.list_users(**params)
-                users = response.get("Users", [])
-                for item in users:
-                    if not isinstance(item, dict):
-                        continue
-                    username = str(item.get("Username", "")).strip()
-                    if not username:
-                        continue
-                    attributes = self._extract_user_attributes(item.get("Attributes"))
-                    group_names = self._list_user_group_names(username=username)
-                    roles: list[str] = []
-                    for name in sorted(group_names):
-                        roles.append(name)
-                    if normalized_roles and not any(role in roles for role in normalized_roles):
-                        continue
-                    out.append(
-                        RegisteredUserResult(
-                            username=username,
-                            email=attributes.get("email"),
-                            given_name=attributes.get("given_name"),
-                            family_name=attributes.get("family_name"),
-                            created_by=attributes.get("custom:created_by"),
-                            enabled=bool(item.get("Enabled", False)),
-                            roles=tuple(roles),
-                        )
-                    )
-
-                pagination_token = response.get("PaginationToken")
-                if not pagination_token:
-                    break
-
-            out.sort(key=lambda user: user.username)
-            total = len(out)
-            start = (page - 1) * page_size
-            end = start + page_size
-            return RegisteredUsersPageResult(
-                page=page,
-                page_size=page_size,
-                total=total,
-                users=tuple(out[start:end]),
-            )
-
         try:
-            return await run_in_threadpool(_list_all)
+            return await self._get_all_users_cached()
         except HTTPException:
             raise
         except Exception as exc:
@@ -696,6 +680,176 @@ class CognitoIdentityProvider(IdentityProvider):
                     cognito_message=message,
                 ),
             ) from exc
+
+    def _list_users_cache_key(self) -> str:
+        return f"cognito_identity:list_users:{self._user_pool_id}"
+
+    async def _get_all_users_cached(self) -> tuple[RegisteredUserResult, ...]:
+        """Trae todos los usuarios del pool (con sus roles) via cache SWR.
+
+        El pool entero cabe casi siempre en una sola llamada ``list_users``; el
+        costo real es un ``admin_list_groups_for_user`` por usuario, que no se
+        puede evitar (Cognito no tiene un "get groups" masivo). Por eso se
+        paralelizan esas llamadas y, ademas, se cachea el resultado: dentro del
+        TTL fresco se sirve del cache, en la ventana stale-while-revalidate se
+        sirve el valor viejo *y* se dispara una revalidacion en background que
+        compara un hash del contenido para detectar si algo cambio (mismo
+        patron que ``CachingRestClient``).
+        """
+        if self._cache is None:
+            return await run_in_threadpool(self._fetch_all_users_sync)
+
+        key = self._list_users_cache_key()
+        now = time.time()
+        entry = await self._cache.get(key)
+
+        if entry is not None:
+            age = now - entry.get("stored_at", now)
+            if age < self._list_users_ttl:
+                return self._deserialize_users(entry["users"])
+            if age < self._list_users_ttl + self._list_users_swr:
+                self._schedule_list_users_revalidation(key, entry.get("hash"))
+                return self._deserialize_users(entry["users"])
+
+        users = await run_in_threadpool(self._fetch_all_users_sync)
+        await self._store_list_users_cache(key, users, now)
+        return users
+
+    def _schedule_list_users_revalidation(self, key: str, old_hash: str | None) -> None:
+        if key in self._list_users_inflight:
+            return
+        self._list_users_inflight.add(key)
+
+        async def _run() -> None:
+            try:
+                users = await run_in_threadpool(self._fetch_all_users_sync)
+                serialized = self._serialize_users(users)
+                new_hash = self._hash_users(serialized)
+                await self._store_list_users_cache(key, users, time.time())
+                if new_hash != old_hash:
+                    logger.info(
+                        "Cambio detectado en usuarios de Cognito al revalidar cache pool_id=%s",
+                        self._user_pool_id,
+                    )
+            except Exception:
+                logger.exception(
+                    "Fallo revalidando cache de usuarios de Cognito pool_id=%s",
+                    self._user_pool_id,
+                )
+            finally:
+                self._list_users_inflight.discard(key)
+
+        asyncio.create_task(_run())
+
+    async def _store_list_users_cache(
+        self,
+        key: str,
+        users: tuple[RegisteredUserResult, ...],
+        now: float,
+    ) -> None:
+        serialized = self._serialize_users(users)
+        value = {
+            "users": serialized,
+            "hash": self._hash_users(serialized),
+            "stored_at": now,
+        }
+        await self._cache.set(key, value, self._list_users_ttl + self._list_users_swr)
+
+    @staticmethod
+    def _serialize_users(users: tuple[RegisteredUserResult, ...]) -> list[dict[str, Any]]:
+        return [
+            {
+                "username": user.username,
+                "email": user.email,
+                "given_name": user.given_name,
+                "family_name": user.family_name,
+                "created_by": user.created_by,
+                "enabled": user.enabled,
+                "roles": list(user.roles),
+            }
+            for user in users
+        ]
+
+    @staticmethod
+    def _deserialize_users(data: list[dict[str, Any]]) -> tuple[RegisteredUserResult, ...]:
+        return tuple(
+            RegisteredUserResult(
+                username=item["username"],
+                email=item.get("email"),
+                given_name=item.get("given_name"),
+                family_name=item.get("family_name"),
+                created_by=item.get("created_by"),
+                enabled=bool(item.get("enabled", False)),
+                roles=tuple(item.get("roles", ())),
+            )
+            for item in data
+        )
+
+    @staticmethod
+    def _hash_users(serialized: list[dict[str, Any]]) -> str:
+        canonical = json.dumps(serialized, sort_keys=True, default=str)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _fetch_all_users_sync(self) -> tuple[RegisteredUserResult, ...]:
+        raw_users: list[dict[str, Any]] = []
+        pagination_token: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "UserPoolId": self._user_pool_id,
+                "Limit": 60,
+            }
+            if pagination_token:
+                params["PaginationToken"] = pagination_token
+
+            response = self._client.list_users(**params)
+            raw_users.extend(
+                item for item in response.get("Users", []) if isinstance(item, dict)
+            )
+            pagination_token = response.get("PaginationToken")
+            if not pagination_token:
+                break
+
+        usernames = [str(item.get("Username", "")).strip() for item in raw_users]
+        group_names_by_username = self._list_group_names_for_many(usernames)
+
+        out: list[RegisteredUserResult] = []
+        for item, username in zip(raw_users, usernames):
+            if not username:
+                continue
+            attributes = self._extract_user_attributes(item.get("Attributes"))
+            roles = tuple(sorted(group_names_by_username.get(username, set())))
+            out.append(
+                RegisteredUserResult(
+                    username=username,
+                    email=attributes.get("email"),
+                    given_name=attributes.get("given_name"),
+                    family_name=attributes.get("family_name"),
+                    created_by=attributes.get("custom:created_by"),
+                    enabled=bool(item.get("Enabled", False)),
+                    roles=roles,
+                )
+            )
+
+        out.sort(key=lambda user: user.username)
+        return tuple(out)
+
+    def _list_group_names_for_many(self, usernames: list[str]) -> dict[str, set[str]]:
+        """Resuelve los grupos de N usuarios en paralelo (Cognito no tiene un
+        "get groups" masivo, asi que se abre un pool de hilos acotado)."""
+        unique_usernames = [username for username in usernames if username]
+        if not unique_usernames:
+            return {}
+
+        max_workers = min(self._list_users_concurrency, len(unique_usernames))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_to_username = {
+                pool.submit(self._list_user_group_names, username=username): username
+                for username in unique_usernames
+            }
+            return {
+                future_to_username[future]: future.result()
+                for future in as_completed(future_to_username)
+            }
 
     async def ensure_roles_exist(
         self,
