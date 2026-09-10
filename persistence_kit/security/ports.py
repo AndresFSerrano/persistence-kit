@@ -144,4 +144,3 @@ async def public_key_der_b64(provider: KeyProvider) -> str:
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
     return base64.b64encode(der).decode("ascii")
-    

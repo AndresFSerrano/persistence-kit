@@ -51,7 +51,7 @@ def boom():
     def make(operation_name: str, code: str = "AccessDeniedException"):
         def raise_client_error(**kwargs):
             raise ClientError(
-                {"Error": {"Code": code, "Message": "no sirve"}},
+                {"Error": {"Code": code, "Message": "it does not work"}},
                 operation_name,
             )
 
@@ -124,7 +124,7 @@ async def  test_unwrap_key_fails_with_garbage(provider):
 
 @pytest.mark.asyncio
 async def test_unwrap_key_reports_a_bad_pem_as_a_server_error():
-    provider = LocalKeyProvider("no-es-una-llave")
+    provider = LocalKeyProvider("not-a-key")
 
     with pytest.raises(RuntimeError, match = "ENCRYPTED_PRIVATE_KEY"):
         await provider.unwrap_key(os.urandom(256))
@@ -181,7 +181,7 @@ async def test_unwrap_key_translates_client_error(kms_client, boom):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "code", ["InvalidCiphertextException", "IncorrectKeyException"], ids=["invalido", "otra_llave"]
+    "code", ["InvalidCiphertextException", "IncorrectKeyException"], ids=["invalid", "another_key"]
 )
 async def test_unwrap_key_blames_the_client_for_a_key_kms_cannot_open(kms_client, boom, code):
     kms_client.decrypt = boom("Decrypt", code)

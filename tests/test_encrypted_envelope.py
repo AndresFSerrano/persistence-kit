@@ -44,7 +44,7 @@ def hybrid_envelope(envelope):
     return {
         **envelope,
         "v": HYBRID_VERSION,
-        "key": base64.b64encode(b"llave-envuelta").decode()
+        "key": base64.b64encode(b"wrapped-key").decode()
     }
 
 
@@ -84,7 +84,7 @@ def test_encrypt_never_repeats_a_nonce(key, payload):
 
 def test_decrypt_rejects_something_that_is_not_a_dict(key):
     with pytest.raises(EncryptedPayloadError, match = "Sobre mal formado"):
-        decrypt("no soy un dict", key)
+        decrypt("not a dict", key)
 
 
 def test_decrypt_rejects_a_hybrid_envelope(hybrid_envelope, key):
@@ -108,7 +108,7 @@ def test_decrypt_rejects_a_missing_field(envelope, key, field, message):
 
 @pytest.mark.parametrize(
     "field, value",
-    [("nonce", "no-es-base64!!"), ("ciphertext", "###"), ("ts", "no-soy-un-número")]
+    [("nonce", "not-base64!!"), ("ciphertext", "###"), ("ts", "not-a-number")]
 )
 def test_decrypt_rejects_an_unreadable_field(envelope, key, field, value):
     envelope[field] = value
@@ -148,7 +148,7 @@ async def test_decrypt_hybrid_returns_the_plaintext_and_the_key(hybrid_envelope,
 
     assert data_key == key
     assert json.loads(plaintext) == payload
-    assert provider.wrapped == b"llave-envuelta"
+    assert provider.wrapped == b"wrapped-key"
 
 
 @pytest.mark.asyncio
@@ -160,7 +160,7 @@ async def test_decrypt_hybrid_rejects_a_symmetric_envelope(envelope, provider):
 
 @pytest.mark.asyncio
 async def test_decrypt_hybrid_rejects_an_unreadable_key(hybrid_envelope, provider):
-    hybrid_envelope["key"] = "no-es-base64!!"
+    hybrid_envelope["key"] = "not-base64!!"
     with pytest.raises(EncryptedPayloadError, match = "No se pudo abrir la llave del sobre"):
         await decrypt_hybrid(hybrid_envelope, provider)
     assert provider.wrapped is None
