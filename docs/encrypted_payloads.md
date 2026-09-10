@@ -125,12 +125,13 @@ generated.
 | --- | --- | --- |
 | `memory` (default) | `MemoryKeyProvider` | Generated at startup, gone on restart |
 | `local` | `LocalKeyProvider` | In `ENCRYPTED_PRIVATE_KEY`, as a base64 PEM |
-| `production` | `KmsKeyProvider` | Inside AWS KMS, named by `KMS_KEY_ID`; the service never sees it |
+| `kms` | `KmsKeyProvider` | Inside AWS KMS, named by `KMS_KEY_ID`; the service never sees it |
 
 `ENCRYPTED_TYPE` alone decides, like `AUTH_PROVIDER` and `CACHE_BACKEND` do for
 their own modules; the other two settings only carry the data. Asking for
-`production` without a `KMS_KEY_ID`, or for `local` without an
-`ENCRYPTED_PRIVATE_KEY`, fails with a 500 that names the missing setting.
+`kms` without a `KMS_KEY_ID`, or for `local` without an
+`ENCRYPTED_PRIVATE_KEY`, fails at mount with a `RuntimeError` that names the
+missing setting.
 
 `memory` generates an RSA-2048 pair when the process starts, so the kit runs with
 no configuration at all — the twin of `AUTH_PROVIDER=memory` and
@@ -167,8 +168,12 @@ for that long, so a captured request cannot be replayed.
 
 Those nonces live in the cache, so outside the local stage an encrypted route needs a
 `CACHE_BACKEND` shared by every worker. With `memory` each process keeps its own
-list and the same envelope passes once per worker, so mounting an encrypted route
-under that setting raises at startup.
+list and the same envelope passes once per worker; mounting an encrypted route
+under that setting logs a warning and starts anyway.
+
+`ENCRYPTED_TYPE=memory` outside the local stage warns as well: each process
+generates its own RSA pair, so the public key one replica hands out cannot open
+the envelope that reaches another.
 
 ## Errors
 

@@ -157,7 +157,7 @@ def get_token_verifier(settings: PersistenceKitSettings) -> TokenVerifier:
         settings.memory_jwt_issuer,
     )
 
-@lru_cache(maxsize=1)
+@lru_cache
 def _key_provider_cached(
     provider: str, kms_key_id: str, encrypted_private_key: str
 ) -> KeyProvider:
@@ -171,17 +171,11 @@ def _key_provider_cached(
         return MemoryKeyProvider()
     if provider == EncryptedType.LOCAL.value:
         if not encrypted_private_key:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Falta configuracion ENCRYPTED_PRIVATE_KEY.",
-            )
+            raise RuntimeError("Falta configuracion ENCRYPTED_PRIVATE_KEY.")
         return LocalKeyProvider(encrypted_private_key)
-    if provider == EncryptedType.PRODUCTION.value:
+    if provider == EncryptedType.KMS.value:
         if not kms_key_id:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Falta configuracion KMS_KEY_ID.",
-            )
+            raise RuntimeError("Falta configuracion KMS_KEY_ID.")
         return KmsKeyProvider(kms_key_id)
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

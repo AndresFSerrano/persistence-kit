@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 from collections.abc import Callable
 from typing import Annotated, get_args
 
@@ -8,7 +9,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.routing import APIRoute
 
 from persistence_kit.cache import CacheBackend, CacheSettings, get_cache
-from persistence_kit.settings import PersistenceKitSettings
+from persistence_kit.settings import EncryptedType, PersistenceKitSettings
 from persistence_kit.security.encrypted.errors import EncryptedPayloadError
 from persistence_kit.security.encrypted.envelope import (
     HYBRID_VERSION,
@@ -25,6 +26,8 @@ KEY_HEADER = "x-encrypted-key"
 
 KEY_STATE = "encrypted_key"
 RESPONSE_FIELDS_STATE = "encrypted_response_fields"
+
+logger = logging.getLogger(__name__)
 
 _NOT_JSON = "El cuerpo debe ser un sobre cifrado en JSON."
 
@@ -129,12 +132,20 @@ def _provider_for(settings):
 
 def _prepare_key_provider(settings: PersistenceKitSettings) -> None:
     _provider_for(settings)
+    if settings.is_local_stage:
+        return
+    if settings.encrypted_type is EncryptedType.MEMORY:
+        logger.warning(
+            "Una ruta cifrada con ENCRYPTED_TYPE=memory genera una llave RSA por "
+            "proceso: la publica que entrega una replica no abre el sobre que le "
+            "cae a otra."
+        )
 
-def _require_a_shared_cache(settings: PersistenceKitSettings) -> None:
+def _warn_about_a_memory_cache(settings: PersistenceKitSettings) -> None:
     if settings.is_local_stage:
         return
     if CacheSettings().cache_backend is CacheBackend.MEMORY:
-        raise RuntimeError(
+        logger.warning(
             "Una ruta cifrada necesita un CACHE_BACKEND compartido: con 'memory' "
             "cada proceso lleva su propia lista de sobres usados y el mismo sobre "
             "pasa una vez por worker."
@@ -266,7 +277,7 @@ def build_encrypted_route(settings_dep: Callable) -> type[APIRoute]:
             if not mark.get(ENCRYPTED_FLAG):
                 return original
             settings = settings_dep()
-            _require_a_shared_cache(settings)
+            _warn_about_a_memory_cache(settings)
             _prepare_key_provider(settings)
             fields = mark.get(ENCRYPTED_FIELDS)
             response_fields = mark.get(ENCRYPTED_RESPONSE_FIELDS)

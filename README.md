@@ -230,9 +230,13 @@ field unencrypted.
 
 By default the private key is generated in memory at startup, so encrypted routes
 work with no configuration. Set `ENCRYPTED_TYPE=local` to load a fixed base64 PEM
-from `ENCRYPTED_PRIVATE_KEY`, or `ENCRYPTED_TYPE=production` to keep it inside AWS
+from `ENCRYPTED_PRIVATE_KEY`, or `ENCRYPTED_TYPE=kms` to keep it inside AWS
 KMS. Clients fetch the matching public key from your own endpoint, built on
 `public_key_der_b64(provider)`.
+
+Outside the local stage the kit logs a warning when `ENCRYPTED_TYPE=memory` or
+`CACHE_BACKEND=memory`: both keep per-process state that several replicas do not
+share. It warns and starts anyway.
 
 Envelopes carry a timestamp, expire after sixty seconds, and each nonce is
 accepted once, so a captured request cannot be replayed. Anything malformed,
@@ -323,8 +327,8 @@ The factories read that object: `get_identity_provider`, `get_token_verifier`,
 | `POSTGRES_SSL` | Set when the server requires TLS |
 | `DYNAMODB_REGION`, `DYNAMODB_TABLE_PREFIX` | DynamoDB connection |
 | `ENCRYPTED_PRIVATE_KEY` | Base64 PEM of the RSA private key that unwraps encrypted payloads |
-| `ENCRYPTED_TYPE` | `memory` (default, key generated at startup), `local`, or `production` for AWS KMS |
-| `KMS_KEY_ID` | The KMS key that unwraps the AES key, required by `production` |
+| `ENCRYPTED_TYPE` | `memory` (default, key generated at startup), `local`, or `kms` for AWS KMS |
+| `KMS_KEY_ID` | The KMS key that unwraps the AES key, required by `kms` |
 
 ## Wiring it into an application
 

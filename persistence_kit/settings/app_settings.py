@@ -30,7 +30,7 @@ class DeploymentStage(str, Enum):
 class EncryptedType(str, Enum):
     MEMORY = "memory"
     LOCAL = "local"
-    PRODUCTION = "production"
+    KMS = "kms"
 
 
 LOCAL_DEFAULT_JOB_SERVICE_API_KEY = "local-job-service-dev-key-32-bytes"

@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -37,18 +38,18 @@ class DomainError(Exception):
     pass
 
 
-class Cliente(BaseModel):
-    correo: str
+class Client(BaseModel):
+    email: str
 
 
 class Item(BaseModel):
-    precio: float
+    price: float
 
 
 class LoginRequest(BaseModel):
     user: str
     password: str
-    cliente: Cliente | None = None
+    client: Client | None = None
     items: list[Item] = []
 
 
@@ -119,7 +120,7 @@ def build_client(monkeypatch, data_key, settings):
 
         @router.post("/boom", openapi_extra=encrypted())
         async def boom(payload: dict):
-            raise DomainError("saldo insuficiente")
+            raise DomainError("insufficient balance")
 
         @router.post("/empty", status_code=204, openapi_extra=encrypted())
         async def empty(payload: dict, response: Response):
@@ -128,10 +129,10 @@ def build_client(monkeypatch, data_key, settings):
 
         @router.post("/stream", openapi_extra=encrypted())
         async def stream(payload: dict):
-            async def filas():
-                yield b"una fila\n"
+            async def rows():
+                yield b"a row\n"
 
-            return StreamingResponse(filas(), media_type="text/plain")
+            return StreamingResponse(rows(), media_type="text/plain")
 
         app = FastAPI()
 
@@ -162,11 +163,11 @@ def hybrid_envelope(data_key):
     [
         ("items[]", "apunta a una lista"),
         ("[]", "una lista sin nombre"),
-        ("cliente.", "segmento vacio"),
-        (".correo", "segmento vacio"),
+        ("client.", "segmento vacio"),
+        (".email", "segmento vacio"),
         ("it[]ems.x", "pone \\[\\] en medio"),
     ],
-    ids=["lista_sin_campo", "lista_sin_nombre", "punto_final", "punto_inicial", "corchetes_en_medio"],
+    ids=["list_without_field", "unnamed_list", "trailing_dot", "leading_dot", "brackets_in_the_middle"],
 )
 def test_a_malformed_field_path_is_rejected_at_mount(settings, path, message):
     router = APIRouter(route_class = build_encrypted_route(lambda: settings(DeploymentStage.LOCAL)))
@@ -180,8 +181,8 @@ def test_a_malformed_field_path_is_rejected_at_mount(settings, path, message):
 
 @pytest.mark.parametrize(
     "path, missing",
-    [("passwrod", "passwrod"), ("cliente.corro", "corro"), ("items[].precioo", "precioo")],
-    ids=["plano", "anidado", "en_lista"],
+    [("passwrod", "passwrod"), ("client.emial", "emial"), ("items[].pricee", "pricee")],
+    ids=["flat", "nested", "in_list"],
 )
 def test_a_field_that_the_model_does_not_have_is_rejected_at_mount(settings, path, missing):
     router = APIRouter(route_class = build_encrypted_route(lambda: settings(DeploymentStage.LOCAL)))
@@ -195,8 +196,8 @@ def test_a_field_that_the_model_does_not_have_is_rejected_at_mount(settings, pat
 
 @pytest.mark.parametrize(
     "path",
-    ["password", "cliente.correo", "items[].precio"],
-    ids=["plano", "anidado", "en_lista"],
+    ["password", "client.email", "items[].price"],
+    ids=["flat", "nested", "in_list"],
 )
 def test_a_field_the_model_has_mounts(settings, path):
     router = APIRouter(route_class = build_encrypted_route(lambda: settings(DeploymentStage.LOCAL)))
@@ -227,8 +228,8 @@ def test_response_fields_are_checked_for_syntax_only(settings):
 
     with pytest.raises(RuntimeError, match="apunta a una lista"):
 
-        @router.post("/otro", openapi_extra=encrypted(response_fields=["tokens[]"]))
-        async def otro(payload: LoginRequest):
+        @router.post("/other", openapi_extra=encrypted(response_fields=["tokens[]"]))
+        async def other(payload: LoginRequest):
             return payload
 
 
@@ -249,26 +250,45 @@ def test_mounting_an_encrypted_route_builds_the_key_provider(monkeypatch, settin
     factory_mod._key_provider_cached.cache_clear()
 
 
-def test_a_encrypted_route_refuses_to_mount_with_a_memory_cache(monkeypatch, settings):
+def test_a_encrypted_route_warns_about_a_memory_cache(monkeypatch, settings, caplog):
     monkeypatch.setenv("CACHE_BACKEND", "memory")
     router = APIRouter(route_class = build_encrypted_route(lambda: settings()))
 
-    with pytest.raises(RuntimeError, match="CACHE_BACKEND compartido"):
+    with caplog.at_level(logging.WARNING):
 
         @router.post("/echo", openapi_extra=encrypted())
         async def echo(payload: dict):
             return payload
 
+    assert len(router.routes) == 1
+    assert "CACHE_BACKEND compartido" in caplog.text
 
-def test_a_encrypted_route_mounts_with_a_memory_cache_in_local(monkeypatch, settings):
+
+def test_a_encrypted_route_warns_about_a_memory_key_provider(monkeypatch, settings, caplog):
+    monkeypatch.setenv("CACHE_BACKEND", "mongo")
+    router = APIRouter(route_class = build_encrypted_route(lambda: settings()))
+
+    with caplog.at_level(logging.WARNING):
+
+        @router.post("/echo", openapi_extra=encrypted())
+        async def echo(payload: dict):
+            return payload
+
+    assert "ENCRYPTED_TYPE=memory" in caplog.text
+
+
+def test_a_encrypted_route_stays_quiet_in_local(monkeypatch, settings, caplog):
     monkeypatch.setenv("CACHE_BACKEND", "memory")
     router = APIRouter(route_class = build_encrypted_route(lambda: settings(DeploymentStage.LOCAL)))
 
-    @router.post("/echo", openapi_extra=encrypted())
-    async def echo(payload: dict):
-        return payload
+    with caplog.at_level(logging.WARNING):
+
+        @router.post("/echo", openapi_extra=encrypted())
+        async def echo(payload: dict):
+            return payload
 
     assert len(router.routes) == 1
+    assert caplog.text == ""
 
 
 def test_a_encrypted_route_needs_the_middleware(build_client, hybrid_envelope, settings):
@@ -286,37 +306,37 @@ def test_a_encrypted_route_needs_the_middleware(build_client, hybrid_envelope, s
 
 
 def test_encrypted_replaces_the_body_schema():
-    marca = encrypted()
+    mark = encrypted()
 
-    assert marca[ENCRYPTED_FLAG] is True
-    assert set(marca) == {ENCRYPTED_FLAG, "requestBody"}
+    assert mark[ENCRYPTED_FLAG] is True
+    assert set(mark) == {ENCRYPTED_FLAG, "requestBody"}
 
-    schema = marca["requestBody"]["content"]["application/json"]["schema"]
+    schema = mark["requestBody"]["content"]["application/json"]["schema"]
     assert schema["required"] == ["v", "key", "nonce", "ciphertext", "ts"]
 
 
 def test_encrypted_with_fields_keeps_the_original_body():
-    marca = encrypted(fields = ["password"], response_fields = ["token"])
+    mark = encrypted(fields = ["password"], response_fields = ["token"])
 
-    assert set(marca) == {ENCRYPTED_FIELDS, ENCRYPTED_FLAG, ENCRYPTED_RESPONSE_FIELDS}
-    assert marca[ENCRYPTED_FIELDS] == ["password"]
-    assert marca[ENCRYPTED_RESPONSE_FIELDS] == ["token"]
+    assert set(mark) == {ENCRYPTED_FIELDS, ENCRYPTED_FLAG, ENCRYPTED_RESPONSE_FIELDS}
+    assert mark[ENCRYPTED_FIELDS] == ["password"]
+    assert mark[ENCRYPTED_RESPONSE_FIELDS] == ["token"]
 
 
 def test_encrypted_without_body_only_marks_the_route():
-    marca = encrypted(with_body = False)
+    mark = encrypted(with_body = False)
 
-    assert marca == {ENCRYPTED_FLAG: True}
+    assert mark == {ENCRYPTED_FLAG: True}
 
 
 @pytest.mark.parametrize(
     "payload, path",
     [
-        ({}, "cliente.correo"),
-        ({"cliente": "ana"}, "cliente.correo"),
-        ({"items": "no soy lista"}, "items[].precio"),
+        ({}, "client.email"),
+        ({"client": "ana"}, "client.email"),
+        ({"items": "not a list"}, "items[].price"),
     ],
-    ids=["sin_hijo", "hijo_no_es_dict", "no_es_lista"],
+    ids=["missing_child", "child_is_not_a_dict", "not_a_list"],
 )
 def testlocate_all_returns_empty_when_the_path_leads_nowhere(payload, path):
     assert locate_all(payload, path) == []
@@ -335,34 +355,34 @@ def testlocate_all_returns_the_pair_even_when_the_field_is_missing():
 
 
 def testlocate_all_walks_into_nested_objects():
-    payload = {"cliente": {"correo": "ana@x.com"}}
+    payload = {"client": {"email": "ana@x.com"}}
 
-    pairs = locate_all(payload, "cliente.correo")
+    pairs = locate_all(payload, "client.email")
 
     assert len(pairs) == 1
     container, key = pairs[0]
-    assert container is payload["cliente"]
-    assert key == "correo"
+    assert container is payload["client"]
+    assert key == "email"
 
-    container[key] = "cifrado"
-    assert payload["cliente"]["correo"] == "cifrado"
+    container[key] = "encrypted"
+    assert payload["client"]["email"] == "encrypted"
 
 
 def testlocate_all_walks_lists():
-    payload = {"items": [{"precio": 10}, {"precio": 20}]}
+    payload = {"items": [{"price": 10}, {"price": 20}]}
 
-    pairs = locate_all(payload, "items[].precio")
+    pairs = locate_all(payload, "items[].price")
 
     assert len(pairs) == 2
     assert pairs[0][0] is payload["items"][0]
     assert pairs[1][0] is payload["items"][1]
-    assert [key for _, key in pairs] == ["precio", "precio"]
+    assert [key for _, key in pairs] == ["price", "price"]
 
 
 def testlocate_all_skips_list_items_that_are_not_objects():
-    payload = {"items": [{"precio": 10}, "basura"]}
+    payload = {"items": [{"price": 10}, "garbage"]}
 
-    pairs = locate_all(payload, "items[].precio")
+    pairs = locate_all(payload, "items[].price")
 
     assert len(pairs) == 1
     assert pairs[0][0] is payload["items"][0]
@@ -391,7 +411,7 @@ def test_open_fields_lets_a_declared_field_that_is_missing_through(data_key, set
 def test_open_fields_lets_a_missing_nested_field_through(data_key, settings):
     payload = {"user": "ana"}
 
-    opened, nonces = _open_fields(payload, ["cliente.correo"], data_key, settings())
+    opened, nonces = _open_fields(payload, ["client.email"], data_key, settings())
 
     assert opened == {"user": "ana"}
     assert nonces == []
@@ -427,7 +447,7 @@ def test_encrypt_fields_covers_each_object_of_a_list(data_key):
 
 def test_encrypt_fields_rejects_a_response_that_is_not_an_object(data_key):
     with pytest.raises(EncryptedPayloadError, match="debe ser un objeto o una lista de objetos"):
-        _encrypt_fields("no soy un objeto", ["token"], data_key)
+        _encrypt_fields("not an object", ["token"], data_key)
 
 
 def test_encrypted_route_opens_the_request_body(build_client, hybrid_envelope, data_key):
@@ -471,7 +491,7 @@ async def test_the_nonce_outlives_the_window_that_accepts_the_envelope(monkeypat
 
     monkeypatch.setattr(routes_mod, "get_cache", lambda _name: SpyCache())
 
-    await routes_mod._reject_if_replayed("un-nonce")
+    await routes_mod._reject_if_replayed("a-nonce")
 
     assert captured["ttl"] == 2 * MAX_ENVELOPE_AGE_SECONDS
 
@@ -491,7 +511,7 @@ def test_a_fields_route_rejects_a_replayed_field(build_client, data_key):
 
 def test_encrypted_route_rejects_a_body_that_is_not_json(build_client):
     client = build_client()
-    response = client.post("/echo", content=b"no soy json")
+    response = client.post("/echo", content=b"not json")
 
     assert response.status_code == 400
     assert "sobre cifrado en JSON" in response.json()["detail"]
@@ -549,7 +569,7 @@ def test_a_key_the_provider_cannot_unwrap_is_a_400(build_client, monkeypatch):
     response = client.post(
         "/login",
         json={"password": "demo1234"},
-        headers={KEY_HEADER: base64.b64encode(b"basura").decode()},
+        headers={KEY_HEADER: base64.b64encode(b"garbage").decode()},
     )
 
     assert response.status_code == 400
@@ -570,7 +590,7 @@ def test_a_broken_provider_is_a_server_error_in_both_modes(
         client.post(
             path,
             json=hybrid_envelope({"user": "ana", "password": "demo1234"}),
-            headers={KEY_HEADER: base64.b64encode(b"basura").decode()},
+            headers={KEY_HEADER: base64.b64encode(b"garbage").decode()},
         )
 
 
@@ -596,8 +616,8 @@ def test_an_app_exception_handler_runs_and_its_response_is_encrypted(
     response = client.post("/boom", json=hybrid_envelope({"user": "ana"}))
 
     assert response.status_code == 409
-    assert b"saldo" not in response.content
-    assert json.loads(decrypt(response.json(), data_key)) == {"error": "saldo insuficiente"}
+    assert b"balance" not in response.content
+    assert json.loads(decrypt(response.json(), data_key)) == {"error": "insufficient balance"}
 
 
 def test_an_empty_response_keeps_every_cookie(build_client, hybrid_envelope):
@@ -622,15 +642,15 @@ def test_a_streaming_response_on_a_encrypted_route_fails_loudly(build_client, hy
 def test_a_plain_body_with_a_v_field_passes_in_local(build_client):
     local_client = build_client(DeploymentStage.LOCAL)
 
-    response = local_client.post("/echo", json={"v": "1.2.0", "nombre": "app"})
+    response = local_client.post("/echo", json={"v": "1.2.0", "name": "app"})
 
     assert response.status_code == 200
-    assert response.json() == {"v": "1.2.0", "nombre": "app"}
+    assert response.json() == {"v": "1.2.0", "name": "app"}
 
 
 def test_a_plain_body_with_a_v_field_is_rejected_outside_local(build_client):
     client = build_client()
-    response = client.post("/echo", json={"v": "1.2.0", "nombre": "app"})
+    response = client.post("/echo", json={"v": "1.2.0", "name": "app"})
 
     assert response.status_code == 400
     assert "debe venir en un sobre cifrado" in response.json()["detail"]
