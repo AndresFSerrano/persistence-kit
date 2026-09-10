@@ -14,6 +14,7 @@ from .settings import (
     DeploymentStage,
     ExportStorageProvider,
     MediaStorageProvider,
+    EncryptedType,
     PersistenceKitSettings,
 )
 from .settings.constants import Database
@@ -96,6 +97,51 @@ _OPTIONAL_EXPORTS = {
         "get_token_verifier",
         "security",
     ),
+    "KeyProvider": ("persistence_kit.security.ports", "KeyProvider", "security"),
+    "get_key_provider": ("persistence_kit.security.factory", "get_key_provider", "security"),
+    "public_key_der_b64": (
+        "persistence_kit.security.ports",
+        "public_key_der_b64",
+        "encrypted",
+    ),
+    "LocalKeyProvider": (
+        "persistence_kit.security.providers.encryption_provider",
+        "LocalKeyProvider",
+        "encrypted",
+    ),
+    "MemoryKeyProvider": (
+        "persistence_kit.security.providers.encryption_provider",
+        "MemoryKeyProvider",
+        "encrypted",
+    ),
+    "KmsKeyProvider": (
+        "persistence_kit.security.providers.encryption_provider",
+        "KmsKeyProvider",
+        "encrypted",
+    ),
+    "EncryptedPayloadError": (
+        "persistence_kit.security.encrypted.errors",
+        "EncryptedPayloadError",
+        "encrypted",
+    ),
+    "encrypted": ("persistence_kit.api.encrypted_routes", "encrypted", "encrypted"),
+    "build_encrypted_route": (
+        "persistence_kit.api.encrypted_routes",
+        "build_encrypted_route",
+        "encrypted",
+    ),
+    "EncryptedResponseMiddleware": (
+        "persistence_kit.api.encrypted_middleware",
+        "EncryptedResponseMiddleware",
+        "encrypted",
+    ),
+    "declare_key_header": (
+        "persistence_kit.api.encrypted_routes",
+        "declare_key_header",
+        "encrypted",
+    ),
+    "ENCRYPTED_FLAG": ("persistence_kit.api.encrypted_routes", "ENCRYPTED_FLAG", "encrypted"),
+    "KEY_HEADER": ("persistence_kit.api.encrypted_routes", "KEY_HEADER", "encrypted"),
     "RegistrationResult": (
         "persistence_kit.security.registration",
         "RegistrationResult",
@@ -286,6 +332,7 @@ __all__ = [
     "AuthProvider",
     "ExportStorageProvider",
     "MediaStorageProvider",
+    "EncryptedType",
     "DeploymentStage",
     "LOCAL_DEFAULT_JOB_SERVICE_API_KEY",
     "DEFAULT_MEMORY_JWT_SECRET",

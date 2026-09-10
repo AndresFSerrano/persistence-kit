@@ -5,8 +5,14 @@ from persistence_kit.security.factory import (
     MEMORY_JWT_TTL_SECONDS,
     get_identity_provider,
     get_token_verifier,
+    get_key_provider,
 )
-from persistence_kit.security.ports import IdentityProvider, TokenVerifier
+from persistence_kit.security.ports import (
+    IdentityProvider,
+    KeyProvider,
+    TokenVerifier,
+    public_key_der_b64,
+)
 from persistence_kit.security.registration import (
     LoginResult,
     LogoutResult,
@@ -40,21 +46,39 @@ _LAZY = {
         "persistence_kit.security.token_verifiers.memory_jwt_verifier",
         "MemoryJwtVerifier",
     ),
+    "LocalKeyProvider": (
+        "persistence_kit.security.providers.encryption_provider",
+        "LocalKeyProvider",
+    ),
+    "MemoryKeyProvider": (
+        "persistence_kit.security.providers.encryption_provider",
+        "MemoryKeyProvider",
+    ),
+    "KmsKeyProvider": (
+        "persistence_kit.security.providers.encryption_provider",
+        "KmsKeyProvider",
+    ),
 }
 
 __all__ = [
     "AuthenticatedUser",
     "IdentityProvider",
+    "KeyProvider",
     "TokenVerifier",
     "CognitoIdentityProvider",
     "MemorySecurityProvider",
     "CognitoJwtVerifier",
     "MemoryJwtVerifier",
+    "LocalKeyProvider",
+    "KmsKeyProvider",
+    "MemoryKeyProvider",
     "MEMORY_JWT_SECRET",
     "MEMORY_JWT_ISSUER",
     "MEMORY_JWT_TTL_SECONDS",
     "get_identity_provider",
     "get_token_verifier",
+    "get_key_provider",
+    "public_key_der_b64",
     "RegistrationResult",
     "RoleAssignmentResult",
     "UserStatusUpdateResult",

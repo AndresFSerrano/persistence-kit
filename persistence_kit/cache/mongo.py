@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection
+from pymongo.errors import DuplicateKeyError
 
 
 class MongoCache:
@@ -42,6 +43,19 @@ class MongoCache:
         if ttl_seconds:
             doc["expiresAt"] = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
         await self._col.replace_one({"_id": key}, doc, upsert=True)
+
+    async def set_if_absent(self, key: str, value: Any, ttl_seconds: float | None = None) -> bool:
+        await self._ensure_index()
+        now = datetime.now(timezone.utc)
+        await self._col.delete_one({"_id": key, "expiresAt": {"$lte": now}})
+        doc: dict[str, Any] = {"value": value}
+        if ttl_seconds:
+            doc["expiresAt"] = now + timedelta(seconds=ttl_seconds)
+        try:
+            result = await self._col.update_one({"_id": key}, {"$setOnInsert": doc}, upsert=True)
+        except DuplicateKeyError:
+            return False
+        return result.upserted_id is not None
 
     async def delete(self, key: str) -> None:
         await self._col.delete_one({"_id": key})
