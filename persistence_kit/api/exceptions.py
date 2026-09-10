@@ -31,4 +31,3 @@ class BusinessRuleException(BaseAPIException):
 class DatabaseException(BaseAPIException):
     def __init__(self, detail: str = "Error en la base de datos"):
         super().__init__(status_code=500, detail=detail)
-
