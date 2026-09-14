@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 from collections.abc import Callable
+from functools import lru_cache
 from typing import Annotated, get_args
 
 from fastapi import Header, Request, Response, status
@@ -130,12 +131,16 @@ def _provider_for(settings):
 
     return get_key_provider(settings)
 
+@lru_cache
+def _warn_once(message: str) -> None:
+    logger.warning(message)
+
 def _prepare_key_provider(settings: PersistenceKitSettings) -> None:
     _provider_for(settings)
     if settings.is_local_stage:
         return
     if settings.encrypted_type is EncryptedType.MEMORY:
-        logger.warning(
+        _warn_once(
             "Una ruta cifrada con ENCRYPTED_TYPE=memory genera una llave RSA por "
             "proceso: la publica que entrega una replica no abre el sobre que le "
             "cae a otra."
@@ -145,7 +150,7 @@ def _warn_about_a_memory_cache(settings: PersistenceKitSettings) -> None:
     if settings.is_local_stage:
         return
     if CacheSettings().cache_backend is CacheBackend.MEMORY:
-        logger.warning(
+        _warn_once(
             "Una ruta cifrada necesita un CACHE_BACKEND compartido: con 'memory' "
             "cada proceso lleva su propia lista de sobres usados y el mismo sobre "
             "pasa una vez por worker."

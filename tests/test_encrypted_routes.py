@@ -22,6 +22,7 @@ from persistence_kit.api.encrypted_routes import (
     ENCRYPTED_RESPONSE_FIELDS,
     locate_all,
     _open_fields,
+    _warn_once,
     build_encrypted_route,
     encrypted,
 )
@@ -81,6 +82,11 @@ def settings():
     def make(stage: DeploymentStage = DeploymentStage.PRODUCTION):
         return PersistenceKitSettings(stage=stage)
     return make
+
+
+@pytest.fixture(autouse=True)
+def forget_the_logged_warnings():
+    _warn_once.cache_clear()
 
 
 @pytest.fixture
@@ -289,6 +295,24 @@ def test_a_encrypted_route_stays_quiet_in_local(monkeypatch, settings, caplog):
 
     assert len(router.routes) == 1
     assert caplog.text == ""
+
+
+def test_each_warning_is_logged_once_per_process(monkeypatch, settings, caplog):
+    monkeypatch.setenv("CACHE_BACKEND", "memory")
+    router = APIRouter(route_class = build_encrypted_route(settings))
+
+    with caplog.at_level(logging.WARNING):
+
+        @router.post("/echo", openapi_extra=encrypted())
+        async def echo(payload: dict):
+            return payload
+
+        @router.post("/orders", openapi_extra=encrypted())
+        async def orders(payload: dict):
+            return payload
+
+    assert caplog.text.count("CACHE_BACKEND compartido") == 1
+    assert caplog.text.count("ENCRYPTED_TYPE=memory") == 1
 
 
 def test_a_encrypted_route_needs_the_middleware(build_client, hybrid_envelope, settings):
