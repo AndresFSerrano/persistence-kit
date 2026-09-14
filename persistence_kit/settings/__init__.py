@@ -7,6 +7,7 @@ from .app_settings import (
     DeploymentStage,
     ExportStorageProvider,
     MediaStorageProvider,
+    EncryptedType,
     PersistenceKitSettings,
 )
 from .constants import Database
@@ -20,6 +21,7 @@ __all__ = [
     "AuthProvider",
     "ExportStorageProvider",
     "MediaStorageProvider",
+    "EncryptedType",
     "DeploymentStage",
     "LOCAL_DEFAULT_JOB_SERVICE_API_KEY",
     "DEFAULT_MEMORY_JWT_SECRET",

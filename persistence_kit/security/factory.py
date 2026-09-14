@@ -10,7 +10,9 @@ from persistence_kit.settings import (
     DEFAULT_MEMORY_JWT_TTL_SECONDS,
     AuthProvider,
     PersistenceKitSettings,
+    EncryptedType,
 )
+from persistence_kit.security.ports import KeyProvider
 
 MEMORY_JWT_SECRET = DEFAULT_MEMORY_JWT_SECRET
 MEMORY_JWT_ISSUER = DEFAULT_MEMORY_JWT_ISSUER
@@ -164,4 +166,37 @@ def get_token_verifier(settings: PersistenceKitSettings) -> TokenVerifier:
         settings.cognito_app_client_id,
         settings.memory_jwt_secret,
         settings.memory_jwt_issuer,
+    )
+
+@lru_cache
+def _key_provider_cached(
+    provider: str, kms_key_id: str, encrypted_private_key: str
+) -> KeyProvider:
+    from persistence_kit.security.providers.encryption_provider import (
+        KmsKeyProvider,
+        LocalKeyProvider,
+        MemoryKeyProvider,
+    )
+
+    if provider == EncryptedType.MEMORY.value:
+        return MemoryKeyProvider()
+    if provider == EncryptedType.LOCAL.value:
+        if not encrypted_private_key:
+            raise RuntimeError("Falta configuracion ENCRYPTED_PRIVATE_KEY.")
+        return LocalKeyProvider(encrypted_private_key)
+    if provider == EncryptedType.KMS.value:
+        if not kms_key_id:
+            raise RuntimeError("Falta configuracion KMS_KEY_ID.")
+        return KmsKeyProvider(kms_key_id)
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Proveedor de llaves no soportado: '{provider}'.",
+    )
+
+
+def get_key_provider(settings: PersistenceKitSettings) -> KeyProvider:
+    return _key_provider_cached(
+        settings.encrypted_type.value,
+        settings.kms_key_id,
+        settings.encrypted_private_key,
     )

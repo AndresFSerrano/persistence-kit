@@ -27,6 +27,11 @@ class DeploymentStage(str, Enum):
     DEV = "dev"
     PRODUCTION = "production"
 
+class EncryptedType(str, Enum):
+    MEMORY = "memory"
+    LOCAL = "local"
+    KMS = "kms"
+
 
 LOCAL_DEFAULT_JOB_SERVICE_API_KEY = "local-job-service-dev-key-32-bytes"
 DEFAULT_MEMORY_JWT_SECRET = "memory-local-secret-not-for-production-12345"
@@ -101,6 +106,10 @@ class PersistenceKitSettings(RepoSettings):
     rest_default_verify_tls: bool = True
     rest_default_user_agent: str | None = None
     rest_service_urls: dict[str, str] = {}
+
+    encrypted_type: EncryptedType = EncryptedType.MEMORY
+    encrypted_private_key: str = ""
+    kms_key_id: str = ""
 
     model_config = SettingsConfigDict(extra="ignore")
 

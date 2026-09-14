@@ -27,6 +27,12 @@ class InMemoryTTLCache:
         expires_at = time.monotonic() + ttl_seconds if ttl_seconds else None
         self._store[key] = (value, expires_at)
 
+    async def set_if_absent(self, key: str, value: Any, ttl_seconds: float | None = None) -> bool:
+        if await self.get(key) is not None:
+            return False
+        await self.set(key, value, ttl_seconds)
+        return True
+
     async def delete(self, key: str) -> None:
         self._store.pop(key, None)
 
