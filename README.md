@@ -106,7 +106,8 @@ pip install "persistence-kit[api,security,restclient]"
 | `dynamodb` | DynamoDB repository backend | boto3 |
 | `restclient` | The REST client and its cache | httpx |
 | `encrypted` | Encrypted request and response payloads | fastapi, cryptography |
-| `testing` | Everything the test suite needs | fastapi, pyjwt, httpx, python-multipart, cryptography |
+| `mail` | Mail templates rendered with Jinja2 (sending itself needs no extra) | jinja2 |
+| `testing` | Everything the test suite needs | fastapi, pyjwt, httpx, python-multipart, cryptography, jinja2 |
 | `all` | Every optional capability | all of the above |
 
 Importing `persistence_kit` never loads an optional dependency by itself. Ask for
@@ -125,6 +126,7 @@ add, not an obscure `ImportError`.
 | `security/` | Identity providers and JWT verifiers, memory or Cognito, and the encrypted envelope format |
 | `restclient/` | HTTP client with pluggable auth, endpoint resolution, retries and DTO decoding |
 | `cache/` | Key-value cache with TTL: memory, Mongo or DynamoDB |
+| `mail/` | Outbound mail through an SMTP relay, with templates that live in the app |
 | `resilience/` | Circuit breaker, shared by anything that calls out |
 | `api/` | Reusable FastAPI pieces: error handlers, pagination, rate limiting, encrypted routes |
 | `bootstrap/` | Startup helpers, configuration registry, seed orchestration |
@@ -287,6 +289,69 @@ Both are covered in depth in [`docs/restclient_and_cache.md`](docs/restclient_an
 
 Needs `[restclient]`.
 
+## Mail
+
+Sending mail from an application without it knowing which relay carries it.
+The kit ships the machinery and no templates: the words belong to the app that
+sends them.
+
+```python
+from persistence_kit.mail import MailMessage, build_mailer
+
+mailer = build_mailer("app/templates/mail")
+
+message = mailer.compose(
+    "user_roles_changed",
+    to="ana@udea.edu.co",
+    cc=["coordinacion@udea.edu.co"],
+    bcc="auditoria@udea.edu.co",
+    context={"name": "Ana", "roles": ["Préstamos", "Reportes"]},
+)
+mailer.dispatch(message)
+```
+
+A template is up to three files in the app's directory: `user_roles_changed.subject.txt`
+(required), and `user_roles_changed.html` or `user_roles_changed.txt` (at least one).
+They are Jinja2, so a layout can be shared with `{% extends %}`. HTML is autoescaped,
+and a variable missing from the context fails instead of rendering blank.
+
+`to`, `cc`, `bcc` and `reply_to` take a string, a `MailAddress` or a list of them.
+Blind copies travel in the SMTP envelope only and never appear in the headers.
+Attachments go in `attachments` as `MailAttachment(filename, content, content_type)`.
+
+`compose` raises on a broken template, so a test that composes every template
+catches it. `dispatch` delivers in the background: if the relay fails, the error
+is logged and the request that triggered the mail carries on. Use `await
+mailer.send(message)` when the caller has to know, and `await
+mailer.wait_for_pending()` in tests or at shutdown.
+
+Images are embedded, not linked: `<img src="cid:logo.png">` in a template attaches
+`images/logo.png` from the same directory as an inline part, so it shows even where
+remote images are blocked. `compose` adds it on its own; a missing file or one that
+is not an image fails like a missing variable. `MailAttachment(..., content_id=...)`
+does the same for images the caller builds.
+
+A template can carry a fourth file, `user_roles_changed.sample.json`, with an
+example context. `MailTemplates.names()` lists the templates and
+`sample_context(name)` reads that file, so one parametrized test covers them all.
+The same sample drives the preview, which renders without sending:
+
+```bash
+python -m persistence_kit.mail.preview app/templates/mail user_roles_changed
+```
+
+It writes the `.html` and the `.txt` to a temporary folder, prints the subject
+and opens the HTML in the browser. Without names it renders every template;
+`--output` changes the folder and `--no-open` skips the browser.
+
+The sender is chosen by `MAIL_BACKEND`. `memory` keeps messages in
+`MemoryMailSender.sent`, for tests and for local runs where no relay accepts you.
+`smtp` delivers through `SmtpMailSender`, which upgrades with STARTTLS and logs in
+only if `MAIL_SMTP_USERNAME` is set, so a relay that authorizes by IP works as is.
+
+Needs `[mail]` for templates. `MailMessage` and the senders use only the standard
+library.
+
 ## Resilience
 
 `CircuitBreaker` is domain-agnostic and shared by anything that calls out: after
@@ -311,7 +376,7 @@ class Settings(PersistenceKitSettings):
 ```
 
 The factories read that object: `get_identity_provider`, `get_token_verifier`,
-`get_export_storage`, `get_cache`.
+`get_export_storage`, `get_cache`, `get_mail_sender`.
 
 ### Environment variables
 
@@ -329,6 +394,12 @@ The factories read that object: `get_identity_provider`, `get_token_verifier`,
 | `ENCRYPTED_PRIVATE_KEY` | Base64 PEM of the RSA private key that unwraps encrypted payloads |
 | `ENCRYPTED_TYPE` | `memory` (default, key generated at startup), `local`, or `kms` for AWS KMS |
 | `KMS_KEY_ID` | The KMS key that unwraps the AES key, required by `kms` |
+| `MAIL_BACKEND` | `memory` (default) or `smtp` |
+| `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME` | Default sender. The address is required by `smtp` |
+| `MAIL_SMTP_HOST`, `MAIL_SMTP_PORT` | The relay. Port defaults to `587` |
+| `MAIL_SMTP_STARTTLS` | Upgrade the connection with STARTTLS. Defaults to `true` |
+| `MAIL_SMTP_USERNAME`, `MAIL_SMTP_PASSWORD` | Only for relays that require a login |
+| `MAIL_SMTP_TIMEOUT_SECONDS` | Connection and command timeout. Defaults to `30` |
 
 ## Wiring it into an application
 
@@ -452,11 +523,11 @@ poetry install --with dev --all-extras
 poetry run pytest -q
 ```
 
-Current baseline: **555 tests passing** (version 3.12.0). Async tests use
+Current baseline: **621 tests passing** (version 3.13.0). Async tests use
 `pytest-asyncio` in strict mode, so each one carries `@pytest.mark.asyncio`.
 
 `tests/test_capabilities.py` guards the lazy-import promise: it fails if merely
-importing `persistence_kit` drags in fastapi, pyjwt or boto3.
+importing `persistence_kit` drags in fastapi, pyjwt, boto3 or jinja2.
 
 ## Releasing
 
