@@ -6,7 +6,8 @@ def test_root_import_does_not_eagerly_load_optional_capabilities():
     code = (
         "import sys; "
         "import persistence_kit; "
-        "print('fastapi' in sys.modules, 'jwt' in sys.modules, 'boto3' in sys.modules)"
+        "print('fastapi' in sys.modules, 'jwt' in sys.modules, 'boto3' in sys.modules, "
+        "'jinja2' in sys.modules)"
     )
 
     result = subprocess.run(
@@ -16,4 +17,4 @@ def test_root_import_does_not_eagerly_load_optional_capabilities():
         text=True,
     )
 
-    assert result.stdout.strip() == "False False False"
+    assert result.stdout.strip() == "False False False False"
