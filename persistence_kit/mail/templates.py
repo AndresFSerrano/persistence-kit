@@ -24,6 +24,10 @@ SUBJECT_SUFFIX = ".subject.txt"
 HTML_SUFFIX = ".html"
 TEXT_SUFFIX = ".txt"
 SAMPLE_SUFFIX = ".sample.json"
+FOLDER_SUBJECT = "subject.txt"
+FOLDER_HTML = "body.html"
+FOLDER_TEXT = "body.txt"
+FOLDER_SAMPLE = "sample.json"
 IMAGES_DIRECTORY = "images"
 CID_SOURCE = re.compile(r"""\bsrc\s*=\s*["']cid:([^"']+)["']""", re.IGNORECASE)
 
@@ -36,12 +40,21 @@ class RenderedMail:
     inline_images: tuple[MailAttachment, ...] = ()
 
 
+@dataclass(frozen=True, kw_only=True)
+class _TemplateFiles:
+    subject: str
+    html: str
+    text: str
+    sample: str
+
+
 class MailTemplates:
     """Renders the templates of the application that sends; the kit ships none of its own.
 
-    A template `name` is up to three files in `directory`: `name.subject.txt` (required) and
-    `name.html` or `name.txt` (at least one). HTML is autoescaped, subject and text are not.
-    An optional `name.sample.json` holds an example context for previews and tests.
+    A template `name` is a folder `name/` with `subject.txt` (required) and `body.html` or
+    `body.txt` (at least one), or the same files loose in `directory` as `name.subject.txt`,
+    `name.html` and `name.txt`. HTML is autoescaped, subject and text are not. An optional
+    `sample.json` (`name.sample.json` when loose) holds an example context for previews and tests.
     Every `src="cid:file.png"` in the HTML embeds `images/file.png` in the message.
     """
 
@@ -58,15 +71,14 @@ class MailTemplates:
 
     def render(self, name: str, context: Mapping[str, Any] | None = None) -> RenderedMail:
         values = dict(context or {})
-        subject = self._render_file(f"{name}{SUBJECT_SUFFIX}", values)
+        files = self._files(name)
+        subject = self._render_file(files.subject, values)
         if subject is None:
-            raise MailTemplateError(f"Template '{name}' has no {name}{SUBJECT_SUFFIX}.")
-        html = self._render_file(f"{name}{HTML_SUFFIX}", values)
-        text = self._render_file(f"{name}{TEXT_SUFFIX}", values)
+            raise MailTemplateError(f"Template '{name}' has no {files.subject}.")
+        html = self._render_file(files.html, values)
+        text = self._render_file(files.text, values)
         if html is None and text is None:
-            raise MailTemplateError(
-                f"Template '{name}' needs {name}{HTML_SUFFIX} or {name}{TEXT_SUFFIX}."
-            )
+            raise MailTemplateError(f"Template '{name}' needs {files.html} or {files.text}.")
         return RenderedMail(
             subject=" ".join(subject.split()),
             html=html,
@@ -76,22 +88,40 @@ class MailTemplates:
 
     def names(self) -> list[str]:
         """Every template in the directory, identified by its subject file."""
-        return sorted(
+        loose = (
             path.name.removesuffix(SUBJECT_SUFFIX)
             for path in self._directory.glob(f"*{SUBJECT_SUFFIX}")
         )
+        folders = (path.parent.name for path in self._directory.glob(f"*/{FOLDER_SUBJECT}"))
+        return sorted({*loose, *folders})
 
     def sample_context(self, name: str) -> dict[str, Any]:
-        path = self._directory / f"{name}{SAMPLE_SUFFIX}"
+        relative = self._files(name).sample
+        path = self._directory / relative
         if not path.is_file():
-            raise MailTemplateError(f"Template '{name}' has no {name}{SAMPLE_SUFFIX}.")
+            raise MailTemplateError(f"Template '{name}' has no {relative}.")
         try:
             sample = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise MailTemplateError(f"{path.name} is not valid JSON: {exc}") from exc
+            raise MailTemplateError(f"{relative} is not valid JSON: {exc}") from exc
         if not isinstance(sample, dict):
-            raise MailTemplateError(f"{path.name} must hold a JSON object.")
+            raise MailTemplateError(f"{relative} must hold a JSON object.")
         return sample
+
+    def _files(self, name: str) -> _TemplateFiles:
+        if (self._directory / name).is_dir():
+            return _TemplateFiles(
+                subject=f"{name}/{FOLDER_SUBJECT}",
+                html=f"{name}/{FOLDER_HTML}",
+                text=f"{name}/{FOLDER_TEXT}",
+                sample=f"{name}/{FOLDER_SAMPLE}",
+            )
+        return _TemplateFiles(
+            subject=f"{name}{SUBJECT_SUFFIX}",
+            html=f"{name}{HTML_SUFFIX}",
+            text=f"{name}{TEXT_SUFFIX}",
+            sample=f"{name}{SAMPLE_SUFFIX}",
+        )
 
     def _inline_images(self, name: str, html: str | None) -> tuple[MailAttachment, ...]:
         if html is None:

@@ -310,10 +310,24 @@ message = mailer.compose(
 mailer.dispatch(message)
 ```
 
-A template is up to three files in the app's directory: `user_roles_changed.subject.txt`
-(required), and `user_roles_changed.html` or `user_roles_changed.txt` (at least one).
-They are Jinja2, so a layout can be shared with `{% extends %}`. HTML is autoescaped,
-and a variable missing from the context fails instead of rendering blank.
+A template is a folder in the app's directory, `user_roles_changed/`, with
+`subject.txt` (required) and `body.html` or `body.txt` (at least one). The same
+files can also live loose in the directory as `user_roles_changed.subject.txt`,
+`user_roles_changed.html` and `user_roles_changed.txt`; the folder wins when both
+exist. They are Jinja2, so a layout can be shared with `{% extends "shared/layout.html" %}`,
+resolved from the directory root. HTML is autoescaped, and a variable missing from
+the context fails instead of rendering blank.
+
+```text
+templates/mail/
+  shared/layout.html
+  images/logo.png
+  user_roles_changed/
+    subject.txt
+    body.html
+    body.txt
+    sample.json
+```
 
 `to`, `cc`, `bcc` and `reply_to` take a string, a `MailAddress` or a list of them.
 Blind copies travel in the SMTP envelope only and never appear in the headers.
@@ -331,8 +345,8 @@ remote images are blocked. `compose` adds it on its own; a missing file or one t
 is not an image fails like a missing variable. `MailAttachment(..., content_id=...)`
 does the same for images the caller builds.
 
-A template can carry a fourth file, `user_roles_changed.sample.json`, with an
-example context. `MailTemplates.names()` lists the templates and
+A template can carry a fourth file, `sample.json` (`user_roles_changed.sample.json`
+when loose), with an example context. `MailTemplates.names()` lists the templates and
 `sample_context(name)` reads that file, so one parametrized test covers them all.
 The same sample drives the preview, which renders without sending:
 
@@ -523,7 +537,7 @@ poetry install --with dev --all-extras
 poetry run pytest -q
 ```
 
-Current baseline: **621 tests passing** (version 3.13.0). Async tests use
+Current baseline: **627 tests passing** (version 3.14.0). Async tests use
 `pytest-asyncio` in strict mode, so each one carries `@pytest.mark.asyncio`.
 
 `tests/test_capabilities.py` guards the lazy-import promise: it fails if merely

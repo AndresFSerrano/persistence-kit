@@ -182,3 +182,69 @@ async def test_dispatch_logs_a_relay_failure_without_raising(templates_dir, capl
     assert task.exception() is None
     assert "mail.dispatch_failed" in caplog.text
     assert "relay down" in caplog.text
+
+
+@pytest.fixture
+def folders_dir(templates_dir):
+    (templates_dir / "images").mkdir()
+    (templates_dir / "images" / "key.png").write_bytes(b"\x89PNG-key")
+    shared = templates_dir / "shared"
+    shared.mkdir()
+    (shared / "layout.html").write_text(
+        "<main>{% block content %}{% endblock %}</main>", encoding="utf-8"
+    )
+    welcome = templates_dir / "welcome"
+    welcome.mkdir()
+    (welcome / "subject.txt").write_text("Bienvenida {{ name }}", encoding="utf-8")
+    (welcome / "body.html").write_text(
+        '{% extends "shared/layout.html" %}{% block content %}'
+        '<img src="cid:key.png"><p>{{ name }}</p>{% endblock %}',
+        encoding="utf-8",
+    )
+    (welcome / "body.txt").write_text("Hola {{ name }}", encoding="utf-8")
+    (welcome / "sample.json").write_text('{"name": "Ana"}', encoding="utf-8")
+    (templates_dir / "no_body_folder").mkdir()
+    (templates_dir / "no_body_folder" / "subject.txt").write_text("x", encoding="utf-8")
+    (templates_dir / "no_subject_folder").mkdir()
+    (templates_dir / "no_subject_folder" / "body.txt").write_text("x", encoding="utf-8")
+    return templates_dir
+
+
+def test_a_template_folder_renders_its_subject_and_bodies(folders_dir):
+    rendered = MailTemplates(folders_dir).render("welcome", {"name": "<Ana>"})
+
+    assert rendered.subject == "Bienvenida <Ana>"
+    assert rendered.html == '<main><img src="cid:key.png"><p>&lt;Ana&gt;</p></main>'
+    assert rendered.text == "Hola <Ana>"
+    assert [image.filename for image in rendered.inline_images] == ["key.png"]
+
+
+def test_names_lists_loose_templates_and_folders_with_a_subject(folders_dir):
+    assert MailTemplates(folders_dir).names() == [
+        "html_only",
+        "no_body",
+        "no_body_folder",
+        "user_enabled",
+        "welcome",
+    ]
+
+
+def test_a_template_folder_reads_its_sample(folders_dir):
+    assert MailTemplates(folders_dir).sample_context("welcome") == {"name": "Ana"}
+
+
+@pytest.mark.parametrize(
+    ("name", "error"),
+    [
+        ("no_subject_folder", "has no no_subject_folder/subject.txt"),
+        ("no_body_folder", "needs no_body_folder/body.html or no_body_folder/body.txt"),
+    ],
+)
+def test_a_template_folder_needs_a_subject_and_a_body(folders_dir, name, error):
+    with pytest.raises(MailTemplateError, match=error):
+        MailTemplates(folders_dir).render(name)
+
+
+def test_a_template_folder_without_sample_says_which_file_is_missing(folders_dir):
+    with pytest.raises(MailTemplateError, match="no_body_folder/sample.json"):
+        MailTemplates(folders_dir).sample_context("no_body_folder")
