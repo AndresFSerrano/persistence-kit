@@ -282,8 +282,8 @@ Base URLs can be overridden per environment with `REST_SERVICE_URLS`, a JSON map
 of service name to URL, without touching the registration.
 
 With `[tracing]` installed and a tracer provider in the app, every call is a client
-span inside the current trace, named `<service> <METHOD> <path>` (`billing GET
-/api/invoices`), with the host, the status and the retries. The query string is
+span inside the current trace, named `<METHOD> <path>` (`GET /api/invoices`) and
+tagged with the service in `peer.service`, with the host, the status and the retries. The query string is
 never recorded, and a failure keeps only the error type, not its message, so a
 password sent as a query parameter does not reach the traces. `MemoryRestClient`
 registered under a name produces the same spans, so they show up in local runs too.

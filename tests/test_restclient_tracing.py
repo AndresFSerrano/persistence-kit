@@ -51,13 +51,13 @@ def _ok(request):
 
 
 @pytest.mark.asyncio
-async def test_each_call_is_a_client_span_named_after_the_service(spans):
+async def test_each_call_is_a_client_span_of_its_service(spans):
     client = _client(_ok)
 
     await client.get("/consultaEmpleados", params={"usuario": "juan", "clave": "secreta"})
 
     [span] = spans.get_finished_spans()
-    assert span.name == "sipe GET /ws/consultaEmpleados"
+    assert span.name == "GET /ws/consultaEmpleados"
     assert span.kind == SpanKind.CLIENT
     assert dict(span.attributes) == {
         "http.request.method": "GET",
@@ -131,7 +131,7 @@ async def test_calls_nest_under_the_current_span(spans):
     with tracer.start_as_current_span("POST /auth/login") as parent:
         await client.get("/consultaEmpleados")
 
-    child = next(span for span in spans.get_finished_spans() if span.name.startswith("sipe"))
+    child = next(span for span in spans.get_finished_spans() if span.attributes.get("peer.service") == "sipe")
     assert child.parent.span_id == parent.get_span_context().span_id
     assert child.context.trace_id == parent.get_span_context().trace_id
     await client.aclose()
@@ -150,7 +150,7 @@ async def test_the_registry_names_its_clients(spans):
     await registry.get("mua").get("/validarUsuario", params={"clave": "secreta"})
 
     [span] = spans.get_finished_spans()
-    assert span.name == "mua GET /validarUsuario"
+    assert span.name == "GET /validarUsuario"
     assert span.attributes["peer.service"] == "mua"
     assert "secreta" not in _values(span)
     assert registry.get("mares").name == "mares"

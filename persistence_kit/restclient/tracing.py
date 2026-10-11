@@ -35,10 +35,9 @@ def traced_call(service_name: str, method: str, url: str) -> Iterator[TracedCall
     parts = urlsplit(url)
     path = parts.path or "/"
     verb = method.upper()
-    span_name = " ".join(part for part in (service_name, verb, path) if part)
     tracer = trace.get_tracer(TRACER_NAME)
     with tracer.start_as_current_span(
-        span_name,
+        f"{verb} {path}",
         kind=SpanKind.CLIENT,
         record_exception=False,
         set_status_on_exception=False,
