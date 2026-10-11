@@ -1,6 +1,6 @@
 from enum import Enum
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import SettingsConfigDict
 
 from persistence_kit.settings.repo_settings import RepoSettings
@@ -57,6 +57,7 @@ class PersistenceKitSettings(RepoSettings):
     auth_login_rate_limit: int = 10
     auth_refresh_rate_limit: int = 30
     auth_password_rate_limit: int = 5
+    trusted_proxy_hops: int = Field(default=1, ge=0)
 
     # Export Storage
     export_storage_provider: ExportStorageProvider = ExportStorageProvider.LOCAL
