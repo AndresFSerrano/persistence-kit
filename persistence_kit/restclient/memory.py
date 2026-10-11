@@ -13,6 +13,7 @@ from persistence_kit.restclient.contracts import (
 from persistence_kit.restclient.errors import RestHTTPError
 from persistence_kit.restclient.mapping import ModelMappingMixin
 from persistence_kit.restclient.payload import prepare_request
+from persistence_kit.restclient.tracing import traced_call
 
 Handler = Callable[[RestRequest], RestResponse]
 
@@ -39,7 +40,9 @@ class MemoryRestClient(ModelMappingMixin):
         resolver: EndpointResolver | None = None,
         default_headers: Mapping[str, str] | None = None,
         raise_for_status: bool = True,
+        name: str = "",
     ) -> None:
+        self.name = name
         self._auth = authenticator or NoAuth()
         self._resolver = resolver
         self._default_headers = dict(default_headers or {})
@@ -100,22 +103,24 @@ class MemoryRestClient(ModelMappingMixin):
         request = await self._auth.apply(request)
         self.calls.append(request)
 
-        stub = self._stubs.get((method.upper(), service))
-        if stub is None:
-            response = RestResponse(
-                status_code=404,
-                headers={},
-                content=b"",
-                url=url,
-            )
-        elif callable(stub):
-            response = stub(request)
-        else:
-            response = stub
+        with traced_call(self.name, request.method, request.url) as call:
+            stub = self._stubs.get((method.upper(), service))
+            if stub is None:
+                response = RestResponse(
+                    status_code=404,
+                    headers={},
+                    content=b"",
+                    url=url,
+                )
+            elif callable(stub):
+                response = stub(request)
+            else:
+                response = stub
 
-        if self._raise and not response.is_success:
-            raise RestHTTPError(response.status_code, response=response)
-        return response
+            call.record(response.status_code)
+            if self._raise and not response.is_success:
+                raise RestHTTPError(response.status_code, response=response)
+            return response
 
     async def get(self, service: str, **kwargs: Any) -> RestResponse:
         return await self.request("GET", service, **kwargs)

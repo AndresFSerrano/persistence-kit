@@ -23,6 +23,7 @@ from persistence_kit.restclient.mapping import ModelMappingMixin
 from persistence_kit.restclient.payload import prepare_request
 from persistence_kit.restclient.resolver import StaticEndpointResolver
 from persistence_kit.restclient.retry import RetryPolicy
+from persistence_kit.restclient.tracing import traced_call
 
 
 class HttpxRestClient(ModelMappingMixin):
@@ -41,7 +42,9 @@ class HttpxRestClient(ModelMappingMixin):
         retry_policy: RetryPolicy | None = None,
         circuit_breaker: CircuitBreaker | None = None,
         client: httpx.AsyncClient | None = None,
+        name: str = "",
     ) -> None:
+        self.name = name
         self._config = config or ServiceConfig()
         self._resolver = resolver or StaticEndpointResolver()
         self._auth = authenticator or NoAuth()
@@ -89,6 +92,14 @@ class HttpxRestClient(ModelMappingMixin):
         )
         request = await self._auth.apply(request)
 
+        with traced_call(self.name, request.method, request.url) as call:
+            response, attempts = await self._exchange(request)
+            call.record(response.status_code, attempts)
+            if self._config.raise_for_status and not response.is_success:
+                raise RestHTTPError(response.status_code, response=response)
+            return response
+
+    async def _exchange(self, request: RestRequest) -> tuple[RestResponse, int]:
         attempt = 0
         refreshed = False
         while True:
@@ -128,10 +139,7 @@ class HttpxRestClient(ModelMappingMixin):
                 attempt += 1
                 continue
             break
-
-        if self._config.raise_for_status and not response.is_success:
-            raise RestHTTPError(response.status_code, response=response)
-        return response
+        return response, attempt
 
     async def _send(self, request: RestRequest) -> RestResponse:
         try:

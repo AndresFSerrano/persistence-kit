@@ -24,6 +24,7 @@ def build_rest_client(
     retry_policy: RetryPolicy | None = None,
     circuit_breaker: CircuitBreaker | None = None,
     settings: Any | None = None,
+    name: str = "",
 ) -> RestClient:
     if config is None:
         config = (
@@ -48,4 +49,5 @@ def build_rest_client(
         authenticator=authenticator,
         retry_policy=retry_policy,
         circuit_breaker=circuit_breaker,
+        name=name,
     )
