@@ -83,6 +83,8 @@ class RestClientRegistry:
         Inyecta dobles de prueba o stubs sin pasar por el transporte HTTP: ``get``
         devuelve este cliente tal cual, sin construir un ``HttpxRestClient``.
         """
+        if hasattr(client, "name") and not client.name:
+            client.name = name
         self._clients[name] = client
         return self
 
@@ -108,6 +110,7 @@ class RestClientRegistry:
             authenticator=service.authenticator,
             retry_policy=service.retry_policy,
             circuit_breaker=service.circuit_breaker,
+            name=name,
         )
 
         if service.config.cache_ttl_seconds or service.config.cacheable:

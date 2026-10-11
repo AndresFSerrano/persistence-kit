@@ -107,7 +107,8 @@ pip install "persistence-kit[api,security,restclient]"
 | `restclient` | The REST client and its cache | httpx |
 | `encrypted` | Encrypted request and response payloads | fastapi, cryptography |
 | `mail` | Mail templates rendered with Jinja2 (sending itself needs no extra) | jinja2 |
-| `testing` | Everything the test suite needs | fastapi, pyjwt, httpx, python-multipart, cryptography, jinja2 |
+| `tracing` | A span for every REST call, inside the request's trace | opentelemetry-api |
+| `testing` | Everything the test suite needs | fastapi, pyjwt, httpx, python-multipart, cryptography, jinja2, opentelemetry-api |
 | `all` | Every optional capability | all of the above |
 
 Importing `persistence_kit` never loads an optional dependency by itself. Ask for
@@ -280,6 +281,13 @@ real one in tests.
 Base URLs can be overridden per environment with `REST_SERVICE_URLS`, a JSON map
 of service name to URL, without touching the registration.
 
+With `[tracing]` installed and a tracer provider in the app, every call is a client
+span inside the current trace, named `<METHOD> <path>` (`GET /api/invoices`) and
+tagged with the service in `peer.service`, with the host, the status and the retries. The query string is
+never recorded, and a failure keeps only the error type, not its message, so a
+password sent as a query parameter does not reach the traces. `MemoryRestClient`
+registered under a name produces the same spans, so they show up in local runs too.
+
 The cache is a plain key-value store with TTL, chosen by `CACHE_BACKEND` the
 same way repositories are chosen by `REPO_DATABASE`. Set `CACHE_NAMESPACE` when
 several apps share one DynamoDB table or Mongo collection so their keys do not
@@ -400,6 +408,7 @@ The factories read that object: `get_identity_provider`, `get_token_verifier`,
 | `CACHE_BACKEND` | `memory`, `mongo` or `dynamodb`. Defaults to `memory` |
 | `CACHE_NAMESPACE` | Key prefix, so apps sharing a cache store do not collide |
 | `REST_SERVICE_URLS` | JSON map `{"service": "base_url"}` overriding registered REST base URLs |
+| `TRUSTED_PROXY_HOPS` | Proxies in front of the app that append to `X-Forwarded-For`. The auth rate limit counts the address the outermost one saw, so a forged header does not open a new bucket. `1` by default (one load balancer), `2` behind CloudFront and an ALB, `0` with no proxy |
 | `MONGO_DSN`, `MONGO_DB` | Mongo connection |
 | `POSTGRES_DSN` | Full DSN, if you prefer it to the pieces below |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB` | Postgres connection |

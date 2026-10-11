@@ -48,16 +48,11 @@ class InMemoryRateLimiter:
             return None
 
 
-def _resolve_client_id(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        first_ip = forwarded_for.split(",")[0].strip()
-        if first_ip:
-            return first_ip
-
-    cf_connecting_ip = request.headers.get("cf-connecting-ip")
-    if cf_connecting_ip:
-        return cf_connecting_ip.strip()
+def _resolve_client_id(request: Request, trusted_proxy_hops: int) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    chain = [hop.strip() for hop in forwarded_for.split(",") if hop.strip()]
+    if 0 < trusted_proxy_hops <= len(chain):
+        return chain[-trusted_proxy_hops]
 
     client_host = request.client.host if request.client else None
     return client_host or "unknown"
@@ -87,7 +82,7 @@ def build_auth_rate_limit_dependency(
         limit = getattr(settings, limit_setting_name)
         retry_after = await _get_rate_limiter(request).hit(
             scope=scope,
-            client_id=_resolve_client_id(request),
+            client_id=_resolve_client_id(request, getattr(settings, "trusted_proxy_hops", 1)),
             limit=limit,
             window_seconds=settings.auth_rate_limit_window_seconds,
         )
