@@ -158,6 +158,15 @@ url = await storage.generate_presigned_url(key)
 `LocalObjectStorage` writes to a directory and signs its own download URLs.
 `S3ObjectStorage` uploads to S3 and returns AWS presigned URLs. Pick one with
 `get_export_storage(settings)`, which reads your settings and caches the adapter.
+Give `S3ObjectStorage` a `prefix` and every key it writes, presigns, deletes or
+lists stays under that folder of the bucket, while the keys you pass and get back
+stay relative to it.
+
+For files your users upload, `build_media_storage(settings, namespace=...,
+url_prefix=...)` checks type and size and keeps each namespace in its own
+folder: `<LOCAL_MEDIA_STORAGE_DIR>/<namespace>` with `MEDIA_STORAGE_PROVIDER=local`,
+and `<namespace>/` inside `AWS_S3_MEDIA_BUCKET` with `s3`. Keys are the same on
+both, so moving to S3 does not change what your app stores.
 
 FastAPI apps can mount `build_local_export_storage_router(...)` to serve local
 files, passing their settings provider, an optional current-user dependency, and

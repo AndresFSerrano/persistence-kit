@@ -21,9 +21,13 @@ class FakeClientError(Exception):
 
 class FakeS3Client:
     def __init__(self) -> None:
+        self.put_calls: list[dict] = []
         self.delete_calls: list[dict] = []
         self.paginate_calls: list[dict] = []
         self.list_pages: list[list[dict]] = []
+
+    def put_object(self, **kwargs) -> None:
+        self.put_calls.append(kwargs)
 
     def delete_object(self, **kwargs) -> None:
         self.delete_calls.append(kwargs)
@@ -243,3 +247,50 @@ def test_build_media_storage_s3_uses_bucket(monkeypatch):
     assert media.url_prefix == "/media/products"
     # Ensure the S3 backend was actually wired (not Local).
     assert fake_client.delete_calls == []
+
+
+@pytest.fixture
+def s3_client(monkeypatch) -> FakeS3Client:
+    client = FakeS3Client()
+
+    def _build_client(*_args, **_kwargs) -> FakeS3Client:
+        return client
+
+    monkeypatch.setattr(s3_mod, "ClientError", FakeClientError)
+    monkeypatch.setattr(s3_mod, "boto3", SimpleNamespace(client=_build_client))
+    return client
+
+
+def _s3_settings() -> PersistenceKitSettings:
+    return _settings(
+        media_storage_provider="s3",
+        aws_s3_media_bucket="my-media",
+        aws_region="us-east-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_media_storage_s3_keeps_each_namespace_in_its_folder(s3_client: FakeS3Client):
+    settings = _s3_settings()
+    avatars = build_media_storage(settings, namespace="avatars", url_prefix="/media/avatars")
+    products = build_media_storage(settings, namespace="product_images", url_prefix="/media/products")
+
+    await avatars.upload("u1/main.png", b"avatar", "image/png")
+    await products.upload("u1/main.png", b"product", "image/png")
+
+    assert [call["Key"] for call in s3_client.put_calls] == [
+        "avatars/u1/main.png",
+        "product_images/u1/main.png",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_remove_other_files_in_scope_on_s3_keeps_the_current_file(s3_client: FakeS3Client):
+    s3_client.list_pages = [
+        [{"Key": "avatars/u1/old.png"}, {"Key": "avatars/u1/new.png"}],
+    ]
+    media = build_media_storage(_s3_settings(), namespace="avatars", url_prefix="/media/avatars")
+
+    await media.remove_other_files_in_scope("u1", "u1/new.png")
+
+    assert s3_client.delete_calls == [{"Bucket": "my-media", "Key": "avatars/u1/old.png"}]

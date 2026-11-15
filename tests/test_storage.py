@@ -305,3 +305,65 @@ async def test_s3_storage_list_keys_wraps_client_error(fake_s3_client: FakeS3Cli
 
     with pytest.raises(StorageError):
         await storage.list_keys(prefix="scope")
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_prefix_goes_before_every_key(tmp_path: Path, fake_s3_client: FakeS3Client):
+    source = tmp_path / "report.pdf"
+    source.write_bytes(b"%PDF")
+    storage = S3ObjectStorage(bucket="media", region="us-east-1", prefix="/avatars/")
+
+    await storage.upload("abc/photo.png", b"png", "image/png")
+    await storage.upload_file("abc/report.pdf", source, "application/pdf")
+    await storage.generate_presigned_url("abc/photo.png")
+    await storage.delete("abc/photo.png")
+
+    sent_keys = [
+        fake_s3_client.put_calls[0]["Key"],
+        fake_s3_client.upload_fileobj_calls[0]["Key"],
+        fake_s3_client.presign_calls[0]["Params"]["Key"],
+        fake_s3_client.delete_calls[0]["Key"],
+    ]
+    assert sent_keys == [
+        "avatars/abc/photo.png",
+        "avatars/abc/report.pdf",
+        "avatars/abc/photo.png",
+        "avatars/abc/photo.png",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_with_prefix_returns_the_key_it_was_given(fake_s3_client: FakeS3Client):
+    storage = S3ObjectStorage(bucket="media", region="us-east-1", prefix="avatars")
+
+    key = await storage.upload("abc/photo.png", b"png", "image/png")
+
+    assert key == "abc/photo.png"
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_list_keys_searches_inside_the_prefix(fake_s3_client: FakeS3Client):
+    fake_s3_client.list_pages = [
+        [{"Key": "avatars/abc/old.png"}, {"Key": "avatars/abc/new.png"}],
+    ]
+    storage = S3ObjectStorage(bucket="media", region="us-east-1", prefix="avatars")
+
+    keys = await storage.list_keys(prefix="abc")
+
+    assert keys == ["abc/old.png", "abc/new.png"]
+    assert fake_s3_client.paginate_calls == [
+        {"name": "list_objects_v2", "Bucket": "media", "Prefix": "avatars/abc/"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_s3_storage_list_keys_without_scope_stays_inside_the_prefix(
+    fake_s3_client: FakeS3Client,
+):
+    storage = S3ObjectStorage(bucket="media", region="us-east-1", prefix="avatars")
+
+    await storage.list_keys()
+
+    assert fake_s3_client.paginate_calls == [
+        {"name": "list_objects_v2", "Bucket": "media", "Prefix": "avatars/"}
+    ]
