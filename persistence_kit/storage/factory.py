@@ -87,10 +87,10 @@ def _local_media_object_storage_cached(base_dir: str) -> ObjectStorage:
 
 
 @lru_cache
-def _s3_media_object_storage_cached(bucket: str, region: str) -> ObjectStorage:
+def _s3_media_object_storage_cached(bucket: str, region: str, prefix: str) -> ObjectStorage:
     from persistence_kit.storage.s3 import S3ObjectStorage
 
-    return S3ObjectStorage(bucket=bucket, region=region)
+    return S3ObjectStorage(bucket=bucket, region=region, prefix=prefix)
 
 
 def _build_media_object_storage(
@@ -110,7 +110,7 @@ def _build_media_object_storage(
                 "Falta configuracion AWS_S3_MEDIA_BUCKET para el storage de media."
             )
         return _s3_media_object_storage_cached(
-            settings.aws_s3_media_bucket, settings.aws_region
+            settings.aws_s3_media_bucket, settings.aws_region, namespace
         )
     provider = getattr(
         settings.media_storage_provider, "value", settings.media_storage_provider
