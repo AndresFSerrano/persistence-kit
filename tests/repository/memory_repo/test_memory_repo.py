@@ -270,6 +270,9 @@ async def test_list_by_fields_supports_text_ops_and_logical_groups():
     )
     assert by_or == [e2, e3]
 
+    assert await repo.list_by_fields({"and": [{"id": {"in": []}}, {"name": e1.name}]}) == []
+    assert await repo.list_by_fields({"or": [{"id": {"in": []}}, {"id": e1.id}]}) == [e1]
+
 
 @pytest.mark.asyncio
 async def test_count_and_distinct_values():

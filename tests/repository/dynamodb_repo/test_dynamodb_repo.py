@@ -3,6 +3,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from boto3.dynamodb.conditions import Attr
 
 from persistence_kit.repository.dynamodb_repo.dynamodb_mapper import DynamoMapper
 from persistence_kit.repository.dynamodb_repo.dynamodb_repo import (
@@ -185,6 +186,16 @@ def test_build_filter_empty_list_returns_false(mapper):
 def test_build_filter_empty_in_range_returns_false(mapper):
     result = _build_filter(mapper, {"id": {"in": []}})
     assert result is False
+
+
+def test_build_filter_and_group_that_matches_nothing_returns_false(mapper):
+    result = _build_filter(mapper, {"and": [{"id": {"in": []}}, {"name": "alice"}]})
+    assert result is False
+
+
+def test_build_filter_or_group_that_matches_nothing_keeps_the_other_branch(mapper):
+    result = _build_filter(mapper, {"or": [{"id": {"in": []}}, {"name": "alice"}]})
+    assert result == Attr("name").eq("alice")
 
 
 def test_serialize_value_preserves_strings():

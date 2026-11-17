@@ -141,6 +141,8 @@ def _build_query(
             for group in iter_criteria_groups(v):
                 rendered = _build_query(mapper, group)
                 if rendered is None:
+                    if k == "and":
+                        return None
                     continue
                 rendered_groups.append(rendered)
             if not rendered_groups:

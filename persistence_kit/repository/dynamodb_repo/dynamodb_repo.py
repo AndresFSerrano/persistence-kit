@@ -80,6 +80,8 @@ def _build_filter(
             for group in iter_criteria_groups(v):
                 rendered = _build_filter(mapper, group)
                 if rendered is False:
+                    if k == "and":
+                        return False
                     continue
                 if rendered is not None:
                     group_conditions.append(rendered)
