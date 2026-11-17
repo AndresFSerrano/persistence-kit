@@ -70,6 +70,8 @@ def _build_where_clauses(
             for group in iter_criteria_groups(value):
                 nested = _build_where_clauses(table, mapper, group)
                 if nested is None:
+                    if field == "and":
+                        return None
                     continue
                 if not nested:
                     continue

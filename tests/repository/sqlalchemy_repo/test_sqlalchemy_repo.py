@@ -191,6 +191,56 @@ async def test_select_by_fields_supports_text_ops_and_logical_groups():
 
 
 @pytest.mark.asyncio
+async def test_an_and_group_that_matches_nothing_empties_the_whole_query():
+    engine = FakeEngine([[{"id": 1, "name": "a", "category": None}]])
+
+    result = await _select_by_fields(
+        engine,
+        ItemMapper(build_table()),
+        {"and": [{"category": {"in": []}}, {"name": "a"}]},
+        offset=0,
+        limit=10,
+    )
+
+    assert result == []
+    assert engine.conn.statements == []
+
+
+@pytest.mark.asyncio
+async def test_an_and_group_with_a_search_without_words_empties_the_whole_query():
+    engine = FakeEngine([[{"id": 1, "name": "a", "category": None}]])
+
+    result = await _select_by_fields(
+        engine,
+        ItemMapper(build_table()),
+        {"and": [{"name": {"icontains": " -- "}}, {"category": None}]},
+        offset=0,
+        limit=10,
+    )
+
+    assert result == []
+    assert engine.conn.statements == []
+
+
+@pytest.mark.asyncio
+async def test_an_or_group_that_matches_nothing_keeps_the_other_branches():
+    engine = FakeEngine([[{"id": 1, "name": "a", "category": None}]])
+
+    result = await _select_by_fields(
+        engine,
+        ItemMapper(build_table()),
+        {"or": [{"category": {"in": []}}, {"name": "a"}]},
+        offset=0,
+        limit=10,
+    )
+
+    assert [item.name for item in result] == ["a"]
+    sql = str(engine.conn.statements[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "items.name = 'a'" in sql
+    assert "items.category" not in sql.split("WHERE", 1)[1]
+
+
+@pytest.mark.asyncio
 async def test_select_by_fields_normalizes_icontains_terms_for_sql():
     engine = FakeEngine([[{"id": 1, "name": "Andrés Serrano", "category": "docencia"}]])
     await _select_by_fields(

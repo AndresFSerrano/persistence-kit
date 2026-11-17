@@ -295,6 +295,37 @@ async def test_find_by_fields_builds_text_and_logical_query():
 
 
 @pytest.mark.asyncio
+async def test_an_and_group_that_matches_nothing_empties_the_whole_mongo_query():
+    col = FakeCollectionForFind([{"_id": 1, "name": "a", "group": "x"}])
+
+    result = await _find_by_fields(
+        col,
+        FakeMapperForFind(),
+        {"and": [{"name": {"in": []}}, {"group": "x"}]},
+        offset=0,
+        limit=10,
+    )
+
+    assert result == []
+    assert col.last_find == {}
+
+
+@pytest.mark.asyncio
+async def test_an_or_group_that_matches_nothing_keeps_the_other_mongo_branches():
+    col = FakeCollectionForFind([])
+
+    await _find_by_fields(
+        col,
+        FakeMapperForFind(),
+        {"or": [{"name": {"in": []}}, {"group": "x"}]},
+        offset=0,
+        limit=10,
+    )
+
+    assert col.last_find["query"] == {"$or": [{"group": "x"}]}
+
+
+@pytest.mark.asyncio
 async def test_find_by_fields_builds_accent_tolerant_multiterm_regex():
     col = FakeCollectionForFind([])
     mapper = FakeMapperForFind()
