@@ -393,6 +393,19 @@ async def test_mongo_repository_crud_and_indexes():
 
 
 @pytest.mark.asyncio
+async def test_mongo_repository_creates_compound_indexes():
+    collection = FakeCollection()
+    repo = MongoRepository[Entity, int](FakeDb(collection), FakeMapper(), indexes={"by_name_id": ["name", "id"]})
+
+    await repo.add(Entity(id=1, name="a"))
+
+    assert collection.indexes == [
+        {"keys": [("name", 1)], "name": "uniq_by_name", "unique": True},
+        {"keys": [("name", 1), ("_id", 1)], "name": "ix_by_name_id", "unique": False},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_mongo_repository_list_invalid_sort_by_raises():
     collection = FakeCollection()
     db = FakeDb(collection)

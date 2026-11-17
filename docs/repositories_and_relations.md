@@ -98,8 +98,18 @@ Each registered entity can define:
 - `entity`: domain dataclass
 - `collection`: logical collection or table name
 - `unique`: logical unique indexes
+- `indexes` (optional): non-unique composite indexes, `{"name": ["field", ...]}`
 - `database` (optional): backend override per entity
 - `relations` (optional): relation map
+
+Composite indexes:
+
+- the field order is the index order: put equality filters first and the range field (a date, for example) last
+- Postgres creates `ix_<name>_<table>` and Mongo creates `ix_<name>` the first time the repository initializes; an index that already exists is left as is
+- the memory backend accepts the declaration and ignores it
+- DynamoDB raises `ValueError` when the repository is built, because its repository only scans; declare the entity on Postgres or Mongo instead
+- every field must exist on the dataclass (or be `id`), otherwise building the repository raises `ValueError`
+- creating an index on a large existing table blocks writes on it while it builds
 
 Relation fields:
 

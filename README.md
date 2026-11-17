@@ -71,6 +71,7 @@ What goes in a registration:
 | `collection` | Table or collection name in the backing store |
 | `database` | `Database.MEMORY`, `MONGO`, `POSTGRES` or `DYNAMODB`. Defaults to `REPO_DATABASE` |
 | `unique` | Indexed lookups, `{"index_name": "field"}`, used by `get_by_index` |
+| `indexes` | Composite, non-unique indexes for filters and counts, `{"index_name": ["field", ...]}`. Postgres and Mongo create them; memory ignores them; DynamoDB rejects them |
 | `relations` | How this entity joins to others, including many-to-many through a pivot |
 
 Relations are what `get_repo_view(...)` reads to return an entity with its

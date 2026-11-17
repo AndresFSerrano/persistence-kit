@@ -20,6 +20,7 @@ from persistence_kit.repository.filter_ops import (
     tokenize_search_text,
 )
 from persistence_kit.repository.sqlalchemy_repo.schema_evolve import (
+    _safe_identifier,
     ensure_missing_columns,
     ensure_foreign_keys,
 )
@@ -197,15 +198,27 @@ async def _count_by_fields(
 
 
 class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
-    def __init__(self, engine: AsyncEngine, mapper: SqlAlchemyEntityMapper[T, TId], entity_key: str) -> None:
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        mapper: SqlAlchemyEntityMapper[T, TId],
+        entity_key: str,
+        *,
+        indexes: Mapping[str, Sequence[str]] | None = None,
+    ) -> None:
         self._engine = engine
         self._mapper = mapper
         self._entity_key = entity_key
+        self._indexes = {name: tuple(attrs) for name, attrs in (indexes or {}).items()}
         self._inited = False
 
     async def init_indexes(self) -> None:
         table = self._mapper.table()
         uniques = list(self._mapper.unique_columns().items())
+        composites = [
+            (name, [self._mapper.attr_to_storage(attr) for attr in attrs])
+            for name, attrs in self._indexes.items()
+        ]
         fk_map = build_fk_map_from_registry(self._entity_key)
 
         def _create_table_and_indexes(sync_conn):
@@ -214,6 +227,10 @@ class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
             for name, col in uniques:
                 idx_name = f"uniq_{name}_{table.name}"
                 idx = Index(idx_name, table.c[col], unique=True)
+                idx.create(bind=sync_conn, checkfirst=True)
+            for name, cols in composites:
+                idx_name = _safe_identifier(f"ix_{name}_{table.name}")
+                idx = Index(idx_name, *(table.c[col] for col in cols))
                 idx.create(bind=sync_conn, checkfirst=True)
             ensure_foreign_keys(sync_conn, table, fk_map)
 

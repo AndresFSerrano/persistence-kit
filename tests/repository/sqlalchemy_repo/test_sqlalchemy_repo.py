@@ -239,6 +239,58 @@ async def test_init_indexes_calls_helpers(monkeypatch):
     assert created_indexes == [("uniq_by_name_items", True)]
 
 
+def _patch_schema_helpers(monkeypatch, mod, table, created):
+    monkeypatch.setattr(mod, "ensure_missing_columns", lambda *args: None)
+    monkeypatch.setattr(mod, "ensure_foreign_keys", lambda *args: None)
+    monkeypatch.setattr(mod, "build_fk_map_from_registry", lambda key: {})
+    monkeypatch.setattr(table.metadata, "create_all", lambda bind, tables=None, checkfirst=True: None)
+
+    class FakeIndex:
+        def __init__(self, name, *columns, unique=False):
+            self.name = name
+            self.columns = [column.name for column in columns]
+            self.unique = unique
+
+        def create(self, bind=None, checkfirst=True):
+            created.append((self.name, self.columns, self.unique, checkfirst))
+
+    monkeypatch.setattr(mod, "Index", FakeIndex)
+
+
+@pytest.mark.asyncio
+async def test_init_indexes_creates_composite_indexes(monkeypatch):
+    import persistence_kit.repository.sqlalchemy_repo.sqlalchemy_repo as mod
+
+    table = build_table()
+    created = []
+    _patch_schema_helpers(monkeypatch, mod, table, created)
+
+    repo = SqlAlchemyRepository[Item, int](
+        FakeEngine(), ItemMapper(table), "item", indexes={"by_category_name": ["category", "name"]}
+    )
+    await repo.init_indexes()
+    assert created == [
+        ("uniq_by_name_items", ["name"], True, True),
+        ("ix_by_category_name_items", ["category", "name"], False, True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_init_indexes_shortens_long_composite_index_names(monkeypatch):
+    import persistence_kit.repository.sqlalchemy_repo.sqlalchemy_repo as mod
+
+    table = build_table()
+    created = []
+    _patch_schema_helpers(monkeypatch, mod, table, created)
+
+    long_name = "by_" + "category_" * 10
+    repo = SqlAlchemyRepository[Item, int](FakeEngine(), IdOnlyMapper(table), "item", indexes={long_name: ["category"]})
+    await repo.init_indexes()
+    assert len(created) == 1
+    assert len(created[0][0]) <= 63
+    assert created[0][1] == ["category"]
+
+
 @pytest.mark.asyncio
 async def test_crud_methods_and_get_by_index():
     engine = FakeEngine(
