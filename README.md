@@ -565,11 +565,16 @@ importing `persistence_kit` drags in fastapi, pyjwt, boto3 or jinja2.
 
 The normal path, and the only one that produces an official version:
 
-1. Merge to `main`. The branch is protected, so it goes through a pull request.
-2. Bump `version` in `pyproject.toml`.
-3. Publish a GitHub Release with tag `vX.Y.Z` pointing at `main` HEAD.
-4. `.github/workflows/publish-pypi.yml` checks the tag matches `main`, builds, and
-   publishes to PyPI through Trusted Publishing. No tokens stored anywhere.
+1. Bump `version` in `pyproject.toml` inside the pull request.
+2. Merge it to `main`. The branch is protected, so it goes through a pull request.
+3. `.github/workflows/publish-pypi.yml` runs on every push to `main`. If there is
+   no `vX.Y.Z` tag for the version in `pyproject.toml`, it builds, publishes to
+   PyPI through Trusted Publishing once the `pypi` environment is approved, and
+   then creates the GitHub Release `vX.Y.Z` on that commit. A merge that keeps the
+   version publishes nothing. No tokens stored anywhere.
+
+Publishing a GitHub Release by hand still works: the workflow checks that its tag
+points at `main` HEAD and publishes it.
 
 For previews that others need to install before there is a release, use a
 `X.Y.Z.devN` version:

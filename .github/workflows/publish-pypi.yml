@@ -1,32 +1,55 @@
 name: Publish to PyPI
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
 
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
 jobs:
-  guard-main:
-    name: Verify release tag is on main HEAD
+  plan:
+    name: Decide whether this commit publishes
     runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+      version: ${{ steps.decide.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Ensure tag commit equals origin/main HEAD
+      - name: Decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
-          git fetch origin main
-          TAG_SHA="${GITHUB_SHA}"
-          MAIN_SHA="$(git rev-parse origin/main)"
-          if [ "$TAG_SHA" != "$MAIN_SHA" ]; then
-            echo "Release tag commit ($TAG_SHA) is not main HEAD ($MAIN_SHA)."
-            exit 1
+          VERSION="$(sed -n -E 's/^version = "(.+)"/\1/p' pyproject.toml | head -n 1)"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          git fetch origin main --tags
+          if [ "$EVENT" = "release" ]; then
+            MAIN_SHA="$(git rev-parse origin/main)"
+            if [ "$GITHUB_SHA" != "$MAIN_SHA" ]; then
+              echo "Release tag commit ($GITHUB_SHA) is not main HEAD ($MAIN_SHA)."
+              exit 1
+            fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "v${VERSION} is already released; nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v${VERSION} has no release yet; publishing it."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
   build:
     name: Build distribution artifacts
-    needs: guard-main
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -66,3 +89,22 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    name: Create the GitHub release
+    needs: [plan, publish]
+    if: github.event_name == 'push' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "v${VERSION}" \
+            --generate-notes
