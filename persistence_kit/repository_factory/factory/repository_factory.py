@@ -1,3 +1,4 @@
+from dataclasses import fields
 from functools import lru_cache
 from operator import attrgetter
 from typing import Any, Callable, TypeVar, cast
@@ -18,7 +19,7 @@ from persistence_kit.repository.sqlalchemy_repo.sqlalchemy_dataclass_mapper impo
 from persistence_kit.repository.sqlalchemy_repo.sqlalchemy_engine import get_engine
 from persistence_kit.repository.sqlalchemy_repo.sqlalchemy_repo import SqlAlchemyRepository
 from persistence_kit.repository.sqlalchemy_repo.table_factory import build_table_from_dataclass
-from persistence_kit.repository_factory.registry.entity_registry import get_entity_config
+from persistence_kit.repository_factory.registry.entity_registry import EntityConfig, get_entity_config
 from persistence_kit.repository_factory.view.populating_repository import PopulatingRepository
 
 T = TypeVar("T")
@@ -44,6 +45,20 @@ def _to_memory_unique(unique: dict | None) -> dict[str, Callable[[T], Any]]:
     return out
 
 
+def _composite_indexes(entity_key: str, config: EntityConfig) -> dict[str, tuple[str, ...]]:
+    declared = config.get("indexes") or {}
+    known = {f.name for f in fields(config["entity"])} | {"id"}
+    out: dict[str, tuple[str, ...]] = {}
+    for name, attrs in declared.items():
+        if isinstance(attrs, str) or not attrs:
+            raise ValueError(f"Index '{name}' of '{entity_key}' needs a non-empty list of fields")
+        unknown = [attr for attr in attrs if attr not in known]
+        if unknown:
+            raise ValueError(f"Index '{name}' of '{entity_key}' uses unknown fields: {', '.join(unknown)}")
+        out[name] = tuple(attrs)
+    return out
+
+
 @lru_cache
 def _mongo_db(dsn: str, dbname: str) -> AsyncIOMotorDatabase:
     return AsyncIOMotorClient(dsn, uuidRepresentation="standard")[dbname]
@@ -64,6 +79,7 @@ def _repo_cached(entity_key: str, resolved: Database) -> Repository[Any, UUID]:
     settings = RepoSettings()
     config = get_entity_config(entity_key)
     entity_type = cast(type, config["entity"])
+    indexes = _composite_indexes(entity_key, config)
 
     if resolved is Database.MEMORY:
         return MemoryRepository[Any, UUID](
@@ -81,9 +97,14 @@ def _repo_cached(entity_key: str, resolved: Database) -> Repository[Any, UUID]:
                 for key, value in (config.get("unique") or {}).items()
             },
         )
-        return MongoRepository[Any, UUID](db, mapper)
+        return MongoRepository[Any, UUID](db, mapper, indexes=indexes)
 
     if resolved is Database.DYNAMODB:
+        if indexes:
+            raise ValueError(
+                f"DynamoDB repositories do not support composite indexes: '{entity_key}' declares "
+                f"{', '.join(indexes)}. Use Postgres or Mongo for this entity, or drop 'indexes'."
+            )
         prefix = settings.dynamodb_table_prefix
         table_name = f"{prefix}{config['collection']}" if prefix else config["collection"]
         dynamo_mapper = DynamoMapper(
@@ -111,7 +132,7 @@ def _repo_cached(entity_key: str, resolved: Database) -> Repository[Any, UUID]:
                 for key, value in (config.get("unique") or {}).items()
             },
         )
-        return SqlAlchemyRepository[Any, UUID](engine, mapper, entity_key)
+        return SqlAlchemyRepository[Any, UUID](engine, mapper, entity_key, indexes=indexes)
 
     raise ValueError(f"Database {resolved} no soportado: {entity_key}")
 

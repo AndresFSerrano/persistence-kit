@@ -195,16 +195,26 @@ async def _find_by_fields(
     return [mapper.from_document(d) for d in docs]
 
 class MongoRepository(Repository[T, TId], Generic[T, TId]):
-    def __init__(self, db: AsyncIOMotorDatabase, mapper: EntityMapper[T, TId]) -> None:
+    def __init__(
+        self,
+        db: AsyncIOMotorDatabase,
+        mapper: EntityMapper[T, TId],
+        *,
+        indexes: Mapping[str, Sequence[str]] | None = None,
+    ) -> None:
         self._db = db
         self._mapper = mapper
         self._col: AsyncIOMotorCollection = db[mapper.collection()]
+        self._indexes = {name: tuple(attrs) for name, attrs in (indexes or {}).items()}
         self._inited = False
         self._init_lock = asyncio.Lock()
 
     async def init_indexes(self) -> None:
         for name, field in self._mapper.unique_fields().items():
             await self._col.create_index([(field, 1)], name=f"uniq_{name}", unique=True)
+        for name, attrs in self._indexes.items():
+            keys = [(self._mapper.attr_to_storage(attr), 1) for attr in attrs]
+            await self._col.create_index(keys, name=f"ix_{name}", unique=False)
 
     async def _ensure_indexes(self) -> None:
         if self._inited:

@@ -140,9 +140,10 @@ def test_repo_cached_mongo(monkeypatch):
         def __class_getitem__(cls, item):
             return cls
 
-        def __init__(self, db: Any, mapper: Any):
+        def __init__(self, db: Any, mapper: Any, *, indexes: Any = None):
             captured["db"] = db
             captured["mapper"] = mapper
+            captured["indexes"] = indexes
 
     monkeypatch.setattr(rf, "RepoSettings", FakeSettings)
     monkeypatch.setattr(rf, "_mongo_db", lambda dsn, dbname: FakeDb())
@@ -187,10 +188,11 @@ def test_repo_cached_postgres(monkeypatch):
         def __class_getitem__(cls, item):
             return cls
 
-        def __init__(self, engine: Any, mapper: Any, entity_key: str):
+        def __init__(self, engine: Any, mapper: Any, entity_key: str, *, indexes: Any = None):
             captured["engine"] = engine
             captured["mapper"] = mapper
             captured["entity_key"] = entity_key
+            captured["indexes"] = indexes
 
     monkeypatch.setattr(rf, "RepoSettings", FakeSettings)
     monkeypatch.setattr(rf, "get_engine", lambda: FakeEngine())
@@ -338,3 +340,112 @@ async def test_provide_view_repo_wraps_with_populating_repo(monkeypatch):
     repo_view = await dep()
     assert isinstance(repo_view, FakePopulatingRepo)
     assert captured["base"] is ensured_repo
+
+
+@dataclass
+class Order:
+    id: UUID
+    region: str
+    status: str
+    created_at: str
+
+
+ORDER_INDEXES = {"by_region_status": ["region", "status", "created_at"]}
+
+
+def _order_config(indexes: Any) -> Dict[str, Any]:
+    return {"entity": Order, "collection": "orders", "indexes": indexes}
+
+
+def _fake_settings(database: Database):
+    class FakeSettings:
+        repo_database = database
+        mongo_dsn = "mongodb://localhost:27017"
+        mongo_db = "testdb"
+        dynamodb_table_prefix = ""
+        dynamodb_region = "us-east-1"
+
+    return FakeSettings
+
+
+def test_repo_cached_passes_composite_indexes_to_postgres(monkeypatch):
+    import persistence_kit.repository_factory.factory.repository_factory as rf
+
+    captured: Dict[str, Any] = {}
+
+    class FakeSqlRepo:
+        def __class_getitem__(cls, item):
+            return cls
+
+        def __init__(self, engine: Any, mapper: Any, entity_key: str, *, indexes: Any = None):
+            captured["indexes"] = indexes
+
+    monkeypatch.setattr(rf, "RepoSettings", _fake_settings(Database.POSTGRES))
+    monkeypatch.setattr(rf, "get_engine", lambda: object())
+    monkeypatch.setattr(rf, "build_table_from_dataclass", lambda entity, table_name: object())
+    monkeypatch.setattr(rf, "SqlDataclassMapper", lambda *args, **kwargs: object())
+    monkeypatch.setattr(rf, "SqlAlchemyRepository", FakeSqlRepo)
+    monkeypatch.setattr(rf, "get_entity_config", lambda _: _order_config(ORDER_INDEXES))
+
+    _repo_cached("order", Database.POSTGRES)
+    assert captured["indexes"] == {"by_region_status": ("region", "status", "created_at")}
+
+
+def test_repo_cached_passes_composite_indexes_to_mongo(monkeypatch):
+    import persistence_kit.repository_factory.factory.repository_factory as rf
+
+    captured: Dict[str, Any] = {}
+
+    class FakeMongoRepo:
+        def __class_getitem__(cls, item):
+            return cls
+
+        def __init__(self, db: Any, mapper: Any, *, indexes: Any = None):
+            captured["indexes"] = indexes
+
+    monkeypatch.setattr(rf, "RepoSettings", _fake_settings(Database.MONGO))
+    monkeypatch.setattr(rf, "_mongo_db", lambda dsn, dbname: object())
+    monkeypatch.setattr(rf, "DataclassMapper", lambda *args, **kwargs: object())
+    monkeypatch.setattr(rf, "MongoRepository", FakeMongoRepo)
+    monkeypatch.setattr(rf, "get_entity_config", lambda _: _order_config(ORDER_INDEXES))
+
+    _repo_cached("order", Database.MONGO)
+    assert captured["indexes"] == {"by_region_status": ("region", "status", "created_at")}
+
+
+def test_repo_cached_memory_accepts_composite_indexes(monkeypatch):
+    import persistence_kit.repository_factory.factory.repository_factory as rf
+
+    monkeypatch.setattr(rf, "RepoSettings", _fake_settings(Database.MEMORY))
+    monkeypatch.setattr(rf, "get_entity_config", lambda _: _order_config(ORDER_INDEXES))
+
+    repo = _repo_cached("order", Database.MEMORY)
+    assert repo.__class__.__name__ == "MemoryRepository"
+
+
+def test_repo_cached_dynamodb_rejects_composite_indexes(monkeypatch):
+    import persistence_kit.repository_factory.factory.repository_factory as rf
+
+    monkeypatch.setattr(rf, "RepoSettings", _fake_settings(Database.DYNAMODB))
+    monkeypatch.setattr(rf, "get_entity_config", lambda _: _order_config(ORDER_INDEXES))
+
+    with pytest.raises(ValueError, match="DynamoDB repositories do not support composite indexes"):
+        _repo_cached("order", Database.DYNAMODB)
+
+
+@pytest.mark.parametrize(
+    "indexes, message",
+    [
+        ({"by_region": ["region", "missing"]}, "unknown fields: missing"),
+        ({"by_region": []}, "non-empty list of fields"),
+        ({"by_region": "region"}, "non-empty list of fields"),
+    ],
+)
+def test_repo_cached_rejects_invalid_composite_indexes(monkeypatch, indexes, message):
+    import persistence_kit.repository_factory.factory.repository_factory as rf
+
+    monkeypatch.setattr(rf, "RepoSettings", _fake_settings(Database.MEMORY))
+    monkeypatch.setattr(rf, "get_entity_config", lambda _: _order_config(indexes))
+
+    with pytest.raises(ValueError, match=message):
+        _repo_cached("order", Database.MEMORY)

@@ -19,6 +19,7 @@ class EntityConfig(TypedDict, total=False):
     entity: Type[Any]
     collection: str
     unique: dict[str, str | Callable]
+    indexes: dict[str, list[str]]
     database: Database
     relations: dict[str, Relation]
 
