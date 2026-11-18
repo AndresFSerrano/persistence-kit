@@ -34,7 +34,7 @@ File: `persistence_kit/contracts/repository.py`
 Available methods:
 
 - `add(entity)`
-- `get(entity_id)`
+- `get(entity_id, for_update=False)`
 - `list(offset=0, limit=50, sort_by=None, sort_desc=False)`
 - `update(entity)`
 - `delete(entity_id)`
@@ -49,6 +49,33 @@ Implementations:
 - `MemoryRepository` in `persistence_kit/repository/memory_repo/`
 - `MongoRepository` in `persistence_kit/repository/mongo_repo/`
 - `SqlAlchemyRepository` in `persistence_kit/repository/sqlalchemy_repo/`
+
+### Transactions
+
+File: `persistence_kit/repository/transaction.py`
+
+`async with transaction():` groups several calls into one unit: they share a
+connection, commit together when the block ends and roll back together if it
+raises. `get(entity_id, for_update=True)` locks that row until the block ends;
+outside a transaction it raises `TransactionRequiredError`.
+
+- `SqlAlchemyRepository` runs every call inside the block on the transaction's
+  connection and adds `FOR UPDATE` to the locking `get`.
+- `MemoryRepository` locks rows per transaction, keeps a copy of each row it
+  touches to undo it on failure, and returns copies inside the block.
+- `MongoRepository` and `DynamoRepository` raise `TransactionNotSupportedError`
+  on `add`, `update`, `delete` or a locking `get` inside the block.
+- A nested `transaction()` joins the outer one.
+
+`transaction(idempotency_key="...")` also marks the action as done, so it runs
+only once (file: `persistence_kit/repository/idempotency.py`):
+
+- Postgres inserts the key into `idempotency_keys` with `ON CONFLICT DO
+  NOTHING` on the transaction's connection. A concurrent insert of the same key
+  waits for the first transaction; no row inserted means the action was done.
+- Memory locks the key like a row and forgets it if the block fails.
+- A key already done raises `RepeatedActionError`. Any other default database
+  raises `TransactionNotSupportedError`.
 
 ## View Repository (`ViewRepository`)
 
@@ -175,6 +202,7 @@ from persistence_kit.repository_factory import (
     provide_view_repo,
     set_registry_initializer,
 )
+from persistence_kit.repository import RepeatedActionError, transaction
 ```
 
 Only use internal paths when you are extending or testing internals of the library itself.

@@ -87,6 +87,63 @@ provide_repo("user")                # FastAPI dependency
 provide_view_repo("user")           # FastAPI dependency, populated
 ```
 
+## Transactions
+
+Each repository call commits on its own. When several writes have to succeed or
+fail together, put them inside `transaction()`:
+
+```python
+from persistence_kit.repository import transaction
+
+async with transaction():
+    counter = await counters.get("resolution", for_update=True)
+    counter.value += 1
+    await counters.update(counter)
+    await resolutions.add(Resolution(number=counter.value, request_id=request.id))
+```
+
+- Every repository used inside the block shares one connection. The block
+  commits when it ends and rolls everything back if it raises.
+- `get(..., for_update=True)` locks the row until the block ends, so a second
+  transaction that asks for the same row waits for the first one. That is how to
+  hand out consecutive numbers with no repeats and no gaps. Outside a
+  transaction it raises `TransactionRequiredError`.
+- A `transaction()` opened inside another one joins the outer one.
+- Postgres and memory take part. Memory behaves the same way for tests: it locks
+  rows, undoes the writes when the block fails and, inside the block, returns
+  copies, so a change only lands through `update`. Plain reads are not isolated
+  in memory: another transaction can see a write before it commits.
+- MongoDB and DynamoDB repositories raise `TransactionNotSupportedError` when
+  they write or lock a row inside the block.
+- Do not run work in parallel (`asyncio.gather`) inside one transaction: it
+  shares a single connection.
+
+### Actions that must happen only once
+
+Give the transaction an `idempotency_key` when an action must never run twice,
+such as approving a request:
+
+```python
+from persistence_kit.repository import RepeatedActionError, transaction
+
+async with transaction(idempotency_key=f"approve-request:{request.id}"):
+    ...
+```
+
+- The key is saved with the rest of the block, in the `idempotency_keys` table
+  of the default database (`REPO_DATABASE`). If the block fails, the key is
+  rolled back with it and the action can run again.
+- Once the block commits, running it again with the same key raises
+  `RepeatedActionError` before the block starts. Its `key` attribute names the
+  action.
+- When two arrive at the same time, the second waits for the first: if the
+  first commits, the second gets `RepeatedActionError`; if it fails, the second
+  runs.
+- Keys never expire. A key given to a nested `transaction()` belongs to the
+  outer one.
+- Postgres and memory keep keys. With MongoDB or DynamoDB as the default
+  database it raises `TransactionNotSupportedError`.
+
 ## Installation and extras
 
 The base install stays light. Each capability that needs a heavy dependency

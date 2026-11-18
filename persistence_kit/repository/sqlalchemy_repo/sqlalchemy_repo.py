@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, Optional, Sequence, TypeVar, Generic, Hashable, Mapping, Protocol
 try:
     from typing import override
@@ -7,7 +9,7 @@ except ImportError:
     from typing_extensions import override
 
 from sqlalchemy import Table, select, insert, update as sql_update, delete as sql_delete, Index, and_, or_, func, distinct, String, cast
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from persistence_kit.contracts.repository import Repository
 from persistence_kit.repository.filter_ops import (
@@ -24,6 +26,7 @@ from persistence_kit.repository.sqlalchemy_repo.schema_evolve import (
     ensure_missing_columns,
     ensure_foreign_keys,
 )
+from persistence_kit.repository.transaction_context import current_transaction, require_transaction
 from persistence_kit.repository_factory.registry.entity_registry import build_fk_map_from_registry
 
 T = TypeVar("T")
@@ -42,6 +45,16 @@ class SqlAlchemyEntityMapper(Protocol[T, TId]):
     def entity_type(self) -> type[T]: ...
     def has_attr(self, name: str) -> bool: ...
     def attr_to_storage(self, name: str) -> str: ...
+
+
+@asynccontextmanager
+async def _connect(engine: AsyncEngine) -> AsyncIterator[AsyncConnection]:
+    tx = current_transaction()
+    if tx is None:
+        async with engine.begin() as conn:
+            yield conn
+        return
+    yield await tx.connection(engine)
 
 
 def _normalized_text_expr(col: Any) -> Any:
@@ -174,7 +187,7 @@ async def _select_by_fields(
     if limit is not None:
         stmt = stmt.limit(limit)
 
-    async with engine.begin() as conn:
+    async with _connect(engine) as conn:
         res = await conn.execute(stmt)
         rows = res.mappings().all()
 
@@ -193,7 +206,7 @@ async def _count_by_fields(
     stmt = select(func.count()).select_from(table)
     if clauses:
         stmt = stmt.where(and_(*clauses))
-    async with engine.begin() as conn:
+    async with _connect(engine) as conn:
         res = await conn.execute(stmt)
         value = res.scalar_one()
     return int(value)
@@ -250,16 +263,20 @@ class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
         table = self._mapper.table()
         row = dict(self._mapper.to_row(entity))
         row[self._mapper.id_column()] = self._mapper.id_of(entity)
-        async with self._engine.begin() as conn:
+        async with _connect(self._engine) as conn:
             await conn.execute(insert(table).values(row))
 
     @override
-    async def get(self, entity_id: TId) -> Optional[T]:
+    async def get(self, entity_id: TId, *, for_update: bool = False) -> Optional[T]:
+        if for_update:
+            require_transaction()
         await self._ensure_indexes()
         table = self._mapper.table()
         id_col = table.c[self._mapper.id_column()]
         stmt = select(table).where(id_col == entity_id).limit(1)
-        async with self._engine.begin() as conn:
+        if for_update:
+            stmt = stmt.with_for_update()
+        async with _connect(self._engine) as conn:
             res = await conn.execute(stmt)
             row = res.mappings().first()
         return self._mapper.from_row(dict(row)) if row else None
@@ -291,7 +308,7 @@ class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
             .limit(limit)
         )
 
-        async with self._engine.begin() as conn:
+        async with _connect(self._engine) as conn:
             res = await conn.execute(stmt)
             rows = res.mappings().all()
 
@@ -308,7 +325,7 @@ class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
             return
         id_col = table.c[self._mapper.id_column()]
         stmt = sql_update(table).where(id_col == eid).values(**row)
-        async with self._engine.begin() as conn:
+        async with _connect(self._engine) as conn:
             await conn.execute(stmt)
 
     @override
@@ -317,7 +334,7 @@ class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
         table = self._mapper.table()
         id_col = table.c[self._mapper.id_column()]
         stmt = sql_delete(table).where(id_col == entity_id)
-        async with self._engine.begin() as conn:
+        async with _connect(self._engine) as conn:
             await conn.execute(stmt)
 
     @override
@@ -329,7 +346,7 @@ class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
         table = self._mapper.table()
         col = table.c[col_name]
         stmt = select(table).where(col == value).limit(1)
-        async with self._engine.begin() as conn:
+        async with _connect(self._engine) as conn:
             res = await conn.execute(stmt)
             row = res.mappings().first()
         return self._mapper.from_row(dict(row)) if row else None
@@ -339,7 +356,7 @@ class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
         await self._ensure_indexes()
         table = self._mapper.table()
         stmt = select(func.count()).select_from(table)
-        async with self._engine.begin() as conn:
+        async with _connect(self._engine) as conn:
             res = await conn.execute(stmt)
             value = res.scalar_one()
         return int(value)
@@ -394,7 +411,7 @@ class SqlAlchemyRepository(Repository[T, TId], Generic[T, TId]):
                 return []
             if clauses:
                 stmt = stmt.where(and_(*clauses))
-        async with self._engine.begin() as conn:
+        async with _connect(self._engine) as conn:
             res = await conn.execute(stmt)
             values = res.scalars().all()
         return [value for value in values if value is not None]
