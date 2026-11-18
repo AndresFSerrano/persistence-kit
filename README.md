@@ -226,6 +226,19 @@ folder: `<LOCAL_MEDIA_STORAGE_DIR>/<namespace>` with `MEDIA_STORAGE_PROVIDER=loc
 and `<namespace>/` inside `AWS_S3_MEDIA_BUCKET` with `s3`. Keys are the same on
 both, so moving to S3 does not change what your app stores.
 
+```python
+media = build_media_storage(
+    settings, namespace="avatars", url_prefix="/media/avatars", verify_signature=True
+)
+data = await media.read_upload(file)
+```
+
+`verify_signature=True` also checks the first bytes of PDF, PNG, JPEG, GIF and
+WebP files, so a file renamed to `.png` is rejected; other types are not checked.
+It is off by default. `read_upload(file)` takes a FastAPI `UploadFile`, or
+anything with an async `read(size)` and a `content_type`, reads at most
+`max_bytes + 1` bytes, validates them and returns them.
+
 FastAPI apps can mount `build_local_export_storage_router(...)` to serve local
 files, passing their settings provider, an optional current-user dependency, and
 an authorization callback.

@@ -3,7 +3,29 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from persistence_kit.storage.contracts import ObjectStorage
+from persistence_kit.storage.contracts import ObjectStorage, UploadedFile
+
+SignaturePart = tuple[int, bytes]
+Signature = tuple[SignaturePart, ...]
+
+CONTENT_SIGNATURES: dict[str, tuple[Signature, ...]] = {
+    "application/pdf": (((0, b"%PDF-"),),),
+    "image/png": (((0, b"\x89PNG\r\n\x1a\n"),),),
+    "image/jpeg": (((0, b"\xff\xd8\xff"),),),
+    "image/gif": (((0, b"GIF87a"),), ((0, b"GIF89a"),)),
+    "image/webp": (((0, b"RIFF"), (8, b"WEBP")),),
+}
+
+
+def _matches_signature(data: bytes, signature: Signature) -> bool:
+    return all(data.startswith(magic, offset) for offset, magic in signature)
+
+
+def _has_expected_signature(data: bytes, content_type: str) -> bool:
+    signatures = CONTENT_SIGNATURES.get(content_type)
+    if signatures is None:
+        return True
+    return any(_matches_signature(data, signature) for signature in signatures)
 
 
 class MediaStorage:
@@ -29,6 +51,7 @@ class MediaStorage:
         url_prefix: str,
         allowed_content_types: Iterable[str] | None = None,
         max_bytes: int | None = None,
+        verify_signature: bool = False,
     ) -> None:
         self._storage = storage
         self._public_base_url = (public_base_url or "").rstrip("/")
@@ -39,6 +62,7 @@ class MediaStorage:
             else self.DEFAULT_ALLOWED_CONTENT_TYPES
         )
         self._max_bytes = max_bytes if max_bytes is not None else self.DEFAULT_MAX_BYTES
+        self._verify_signature = verify_signature
 
     @property
     def url_prefix(self) -> str:
@@ -56,6 +80,10 @@ class MediaStorage:
     def max_bytes(self) -> int:
         return self._max_bytes
 
+    @property
+    def verify_signature(self) -> bool:
+        return self._verify_signature
+
     def validate_upload(self, data: bytes, content_type: str) -> None:
         from persistence_kit.api.exceptions import ValidationException
 
@@ -71,6 +99,15 @@ class MediaStorage:
             raise ValidationException(
                 f"El archivo excede el tamaño máximo permitido de {max_mb}MB."
             )
+        if self._verify_signature and not _has_expected_signature(data, content_type):
+            raise ValidationException(
+                f"El contenido del archivo no corresponde a su tipo ({content_type})."
+            )
+
+    async def read_upload(self, upload: UploadedFile) -> bytes:
+        data = await upload.read(self._max_bytes + 1)
+        self.validate_upload(data, upload.content_type or "")
+        return data
 
     async def upload(
         self,
