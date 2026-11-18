@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+from functools import partial
 from typing import Optional, Sequence, TypeVar, Generic, Callable, Hashable, Mapping, Any
 try:
     from typing import override
@@ -12,6 +14,7 @@ from persistence_kit.repository.filter_ops import (
     is_range_dict,
     match_criteria,
 )
+from persistence_kit.repository.transaction_context import RowLocks, current_transaction, require_transaction
 
 T = TypeVar("T")
 TId = TypeVar("TId", bound=Hashable)
@@ -20,6 +23,11 @@ def _get_field_value(entity: Any, field: str) -> Any:
     if isinstance(entity, dict):
         return entity.get(field)
     return getattr(entity, field, None)
+
+
+def _detached(entity: T) -> T:
+    return copy.deepcopy(entity) if current_transaction() is not None else entity
+
 
 class MemoryRepository(Repository[T, TId], Generic[T, TId]):
     def __init__(
@@ -31,17 +39,41 @@ class MemoryRepository(Repository[T, TId], Generic[T, TId]):
         self._items: dict[TId, T] = {}
         self._indexes: dict[str, dict[Hashable, TId]] = {k: {} for k in (unique_indexes or {})}
         self._extractors: dict[str, Callable[[T], Hashable]] = dict(unique_indexes or {})
+        self._row_locks = RowLocks()
+
+    async def _claim(self, entity_id: TId) -> None:
+        tx = current_transaction()
+        if tx is not None:
+            await tx.lock_row(self._row_locks, entity_id, partial(self._snapshot, entity_id))
+
+    def _snapshot(self, entity_id: TId) -> Callable[[], None]:
+        return partial(self._restore, entity_id, copy.deepcopy(self._items.get(entity_id)))
+
+    def _restore(self, entity_id: TId, saved: T | None) -> None:
+        self._items.pop(entity_id, None)
+        for idx in self._indexes.values():
+            for value in [value for value, owner in idx.items() if owner == entity_id]:
+                del idx[value]
+        if saved is None:
+            return
+        self._items[entity_id] = saved
+        for name, ext in self._extractors.items():
+            self._indexes[name][ext(saved)] = entity_id
 
     @override
     async def add(self, entity: T) -> None:
         eid = self._id_getter(entity)
+        await self._claim(eid)
         self._items[eid] = entity
         for name, ext in self._extractors.items():
             self._indexes[name][ext(entity)] = eid
 
     @override
-    async def get(self, entity_id: TId) -> Optional[T]:
-        return self._items.get(entity_id)
+    async def get(self, entity_id: TId, *, for_update: bool = False) -> Optional[T]:
+        if for_update:
+            require_transaction()
+            await self._claim(entity_id)
+        return _detached(self._items.get(entity_id))
 
     @override
     async def list(
@@ -58,17 +90,19 @@ class MemoryRepository(Repository[T, TId], Generic[T, TId]):
                 key=lambda e: _get_field_value(e, sort_by),
                 reverse=sort_desc,
             )
-        return vals[offset: offset + limit]
+        return [_detached(entity) for entity in vals[offset: offset + limit]]
 
     @override
     async def update(self, entity: T) -> None:
         eid = self._id_getter(entity)
+        await self._claim(eid)
         self._items[eid] = entity
         for name, ext in self._extractors.items():
             self._indexes[name][ext(entity)] = eid
 
     @override
     async def delete(self, entity_id: TId) -> None:
+        await self._claim(entity_id)
         ent = self._items.pop(entity_id, None)
         if not ent:
             return
@@ -84,7 +118,7 @@ class MemoryRepository(Repository[T, TId], Generic[T, TId]):
         if not idx:
             return None
         eid = idx.get(value)
-        return self._items.get(eid) if eid else None
+        return _detached(self._items.get(eid)) if eid else None
 
     @override
     async def count(self) -> int:
@@ -130,7 +164,7 @@ class MemoryRepository(Repository[T, TId], Generic[T, TId]):
             matched = matched[offset:]
         if limit is not None:
             matched = matched[:limit]
-        return matched
+        return [_detached(entity) for entity in matched]
 
     @override
     async def distinct_values(

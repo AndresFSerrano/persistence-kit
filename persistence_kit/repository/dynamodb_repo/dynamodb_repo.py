@@ -12,6 +12,8 @@ from decimal import Decimal
 import boto3
 from boto3.dynamodb.conditions import Key, Attr, ConditionBase
 from persistence_kit.contracts.repository import Repository
+from persistence_kit.repository.errors import TransactionNotSupportedError
+from persistence_kit.repository.transaction_context import reject_transaction
 from persistence_kit.repository.dynamodb_repo.dynamodb_mapper import DynamoMapper, _serialize_value
 from persistence_kit.repository.filter_ops import (
     is_logical_key,
@@ -131,6 +133,7 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
 
     @override
     async def add(self, entity: T) -> None:
+        reject_transaction("DynamoDB")
         item = self._mapper.to_item(entity)
         await asyncio.to_thread(
             self._table.put_item,
@@ -139,7 +142,9 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
         )
 
     @override
-    async def get(self, entity_id: TId) -> Optional[T]:
+    async def get(self, entity_id: TId, *, for_update: bool = False) -> Optional[T]:
+        if for_update:
+            raise TransactionNotSupportedError("DynamoDB repositories cannot lock a row: for_update=True needs Postgres or memory.")
         response = await asyncio.to_thread(
             self._table.get_item,
             Key={"id": _serialize_value(entity_id)},
@@ -166,11 +171,13 @@ class DynamoRepository(Repository[T, TId], Generic[T, TId]):
 
     @override
     async def update(self, entity: T) -> None:
+        reject_transaction("DynamoDB")
         item = self._mapper.to_item(entity)
         await asyncio.to_thread(self._table.put_item, Item=item)
 
     @override
     async def delete(self, entity_id: TId) -> None:
+        reject_transaction("DynamoDB")
         await asyncio.to_thread(
             self._table.delete_item,
             Key={"id": _serialize_value(entity_id)},

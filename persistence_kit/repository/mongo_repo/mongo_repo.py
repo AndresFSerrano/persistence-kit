@@ -10,6 +10,8 @@ import asyncio
 import re
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorCollection
 from persistence_kit.contracts.repository import Repository
+from persistence_kit.repository.errors import TransactionNotSupportedError
+from persistence_kit.repository.transaction_context import reject_transaction
 from persistence_kit.repository.filter_ops import (
     is_logical_key,
     iter_criteria_groups,
@@ -228,6 +230,7 @@ class MongoRepository(Repository[T, TId], Generic[T, TId]):
 
     @override
     async def add(self, entity: T) -> None:
+        reject_transaction("MongoDB")
         await self._ensure_indexes()
         eid = self._mapper.id_of(entity)
         doc = self._mapper.to_document(entity)
@@ -235,7 +238,9 @@ class MongoRepository(Repository[T, TId], Generic[T, TId]):
         await self._col.insert_one(doc)
 
     @override
-    async def get(self, entity_id: TId) -> Optional[T]:
+    async def get(self, entity_id: TId, *, for_update: bool = False) -> Optional[T]:
+        if for_update:
+            raise TransactionNotSupportedError("MongoDB repositories cannot lock a row: for_update=True needs Postgres or memory.")
         await self._ensure_indexes()
         doc = await self._col.find_one({self._mapper.id_field(): entity_id})
         return self._mapper.from_document(doc) if doc else None
@@ -266,6 +271,7 @@ class MongoRepository(Repository[T, TId], Generic[T, TId]):
 
     @override
     async def update(self, entity: T) -> None:
+        reject_transaction("MongoDB")
         await self._ensure_indexes()
         eid = self._mapper.id_of(entity)
         doc = self._mapper.to_document(entity)
@@ -274,6 +280,7 @@ class MongoRepository(Repository[T, TId], Generic[T, TId]):
 
     @override
     async def delete(self, entity_id: TId) -> None:
+        reject_transaction("MongoDB")
         await self._ensure_indexes()
         await self._col.delete_one({self._mapper.id_field(): entity_id})
 

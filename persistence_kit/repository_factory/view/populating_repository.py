@@ -98,7 +98,9 @@ class PopulatingRepository(ViewRepository[T, TId], Repository[T, TId], Generic[T
     async def add(self, entity: T) -> None:
         await self._inner.add(entity)
 
-    async def get(self, entity_id: TId) -> Optional[T]:
+    async def get(self, entity_id: TId, *, for_update: bool = False) -> Optional[T]:
+        if for_update:
+            return await self._inner.get(entity_id, for_update=True)
         return await self._inner.get(entity_id)
 
     async def list(
