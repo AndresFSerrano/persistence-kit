@@ -1,8 +1,15 @@
+from types import SimpleNamespace
+
 import pytest
 
 import persistence_kit.storage.factory as mod
+import persistence_kit.storage.s3 as s3_mod
 from persistence_kit.settings import ExportStorageProvider, PersistenceKitSettings
-from persistence_kit.storage import LocalExportStorageProvider, StorageConfigError
+from persistence_kit.storage import (
+    LocalExportStorageProvider,
+    S3ExportStorageProvider,
+    StorageConfigError,
+)
 
 
 def test_get_export_storage_uses_local_by_default(tmp_path):
@@ -44,6 +51,30 @@ def test_get_export_storage_requires_bucket_for_s3():
         mod.get_export_storage(settings)
 
     assert "AWS_S3_EXPORT_BUCKET" in str(err.value)
+
+
+def test_get_export_storage_builds_cached_s3_instance(monkeypatch):
+    mod._s3_export_storage_cached.cache_clear()
+    created: list[tuple[str, str]] = []
+
+    def _build_client(service_name: str, region_name: str) -> object:
+        created.append((service_name, region_name))
+        return object()
+
+    monkeypatch.setattr(s3_mod, "boto3", SimpleNamespace(client=_build_client))
+    settings = PersistenceKitSettings(
+        export_storage_provider=ExportStorageProvider.S3,
+        aws_s3_export_bucket="my-exports",
+        aws_region="us-east-2",
+    )
+
+    first = mod.get_export_storage(settings)
+    second = mod.get_export_storage(settings)
+
+    assert isinstance(first, S3ExportStorageProvider)
+    assert first is second
+    assert created == [("s3", "us-east-2")]
+    mod._s3_export_storage_cached.cache_clear()
 
 
 def test_get_export_storage_raises_for_unregistered_provider(tmp_path, monkeypatch):

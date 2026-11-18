@@ -127,6 +127,7 @@ def build_media_storage(
     url_prefix: str,
     allowed_content_types=None,
     max_bytes: int | None = None,
+    verify_signature: bool = False,
 ):
     from persistence_kit.storage.media import MediaStorage
 
@@ -137,4 +138,5 @@ def build_media_storage(
         url_prefix=url_prefix,
         allowed_content_types=allowed_content_types,
         max_bytes=max_bytes,
+        verify_signature=verify_signature,
     )
