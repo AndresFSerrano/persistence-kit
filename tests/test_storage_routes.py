@@ -141,23 +141,142 @@ async def test_serve_media_object_returns_file_response_for_local_backend(
     assert response.media_type == "image/png"
 
 
-@pytest.mark.asyncio
-async def test_serve_media_object_uses_default_media_type_when_unspecified(
-    tmp_path: Path, reset_media_factory_caches
-):
+def _local_media(tmp_path: Path) -> MediaStorage:
     settings = PersistenceKitSettings(
         local_media_storage_dir=str(tmp_path),
         media_storage_provider="local",
     )
-    storage = build_media_storage(
+    return build_media_storage(
         settings, namespace="product_images", url_prefix="/media/product_images"
     )
-    await storage.upload("abc/main.png", b"x", "image/png")
+
+
+@pytest.mark.asyncio
+async def test_serve_media_object_uses_the_stored_type_when_unspecified(
+    tmp_path: Path, reset_media_factory_caches
+):
+    storage = _local_media(tmp_path)
+    await storage.upload("abc/main", b"x", "image/png")
+
+    response = await serve_media_object(storage, "abc/main")
+
+    assert isinstance(response, FileResponse)
+    assert response.media_type == "image/png"
+    assert "content-disposition" not in response.headers
+
+
+@pytest.mark.asyncio
+async def test_serve_media_object_prefers_the_explicit_media_type(
+    tmp_path: Path, reset_media_factory_caches
+):
+    storage = _local_media(tmp_path)
+    await storage.upload("abc/main", b"x", "image/png")
+
+    response = await serve_media_object(storage, "abc/main", media_type="image/webp")
+
+    assert response.media_type == "image/webp"
+
+
+@pytest.mark.asyncio
+async def test_serve_media_object_keeps_octet_stream_for_uploads_without_type(
+    tmp_path: Path, reset_media_factory_caches
+):
+    storage = _local_media(tmp_path)
+    await storage.upload("abc/main.png", b"x")
 
     response = await serve_media_object(storage, "abc/main.png")
 
-    assert isinstance(response, FileResponse)
     assert response.media_type == "application/octet-stream"
+
+
+@pytest.mark.asyncio
+async def test_serve_media_object_guesses_the_type_of_files_saved_before_types_were_kept(
+    tmp_path: Path, reset_media_factory_caches
+):
+    storage = _local_media(tmp_path)
+    storage.object_storage.get_file_path("abc/main.webp").write_bytes(b"x")
+
+    response = await serve_media_object(storage, "abc/main.webp")
+
+    assert response.media_type == "image/webp"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        "text/html",
+        "text/html; charset=utf-8",
+        "image/svg+xml",
+        "application/xhtml+xml",
+        "text/xml",
+        "Application/XML",
+    ],
+)
+async def test_serve_media_object_sends_stored_active_content_as_attachment(
+    tmp_path: Path, reset_media_factory_caches, content_type: str
+):
+    storage = _local_media(tmp_path)
+    await storage.upload("abc/page", b"<svg/>", content_type)
+
+    response = await serve_media_object(storage, "abc/page")
+
+    assert response.media_type == content_type
+    assert response.headers["content-disposition"] == 'attachment; filename="page"'
+
+
+async def _serve_export(settings: PersistenceKitSettings, key: str) -> FileResponse:
+    return await serve_local_export(
+        settings_provider=lambda: settings,
+        key=key,
+        current_user=object(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_serve_local_export_uses_the_stored_type(tmp_path: Path):
+    settings = PersistenceKitSettings(local_export_storage_dir=str(tmp_path))
+    storage = get_export_storage(settings)
+    await storage.upload("exports/test/report.pdf", b"%PDF-1.7", "application/pdf")
+
+    response = await _serve_export(settings, "exports/test/report.pdf")
+
+    assert response.media_type == "application/pdf"
+    assert response.headers["content-disposition"] == 'attachment; filename="report.pdf"'
+
+
+@pytest.mark.asyncio
+async def test_serve_local_export_falls_back_to_the_extension_for_uploads_without_type(
+    tmp_path: Path,
+):
+    settings = PersistenceKitSettings(local_export_storage_dir=str(tmp_path))
+    storage = get_export_storage(settings)
+    await storage.upload("exports/test/report.xlsx", b"fake-xlsx")
+
+    response = await _serve_export(settings, "exports/test/report.xlsx")
+
+    assert response.media_type == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("exports/test/report.csv", "text/csv"),
+        ("exports/test/report.bin", "application/octet-stream"),
+    ],
+)
+async def test_serve_local_export_keeps_serving_files_saved_before_types_were_kept(
+    tmp_path: Path, key: str, expected: str
+):
+    settings = PersistenceKitSettings(local_export_storage_dir=str(tmp_path))
+    get_export_storage(settings).get_file_path(key).write_bytes(b"legacy")
+
+    response = await _serve_export(settings, key)
+
+    assert response.media_type == expected
 
 
 @pytest.mark.asyncio

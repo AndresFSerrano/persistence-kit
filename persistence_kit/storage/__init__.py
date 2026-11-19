@@ -1,4 +1,4 @@
-from persistence_kit.storage.contracts import ObjectStorage
+from persistence_kit.storage.contracts import ObjectStorage, ValidatedUpload
 from persistence_kit.storage.errors import (
     StorageConfigError,
     StorageError,
@@ -30,6 +30,7 @@ _MEDIA_EXPORTS = {"MediaStorage"}
 
 __all__ = [
     "ObjectStorage",
+    "ValidatedUpload",
     "StorageError",
     "StorageConfigError",
     "StorageNotFoundError",

@@ -4,6 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from persistence_kit.storage.contracts import DEFAULT_CONTENT_TYPE
 from persistence_kit.storage.errors import (
     StorageConfigError,
     StorageError,
@@ -46,7 +47,7 @@ class S3ObjectStorage:
         self,
         key: str,
         data: bytes,
-        content_type: str = "application/octet-stream",
+        content_type: str = DEFAULT_CONTENT_TYPE,
     ) -> str:
         object_key = self._object_key(key)
 
@@ -72,7 +73,7 @@ class S3ObjectStorage:
         self,
         key: str,
         file_path: Path,
-        content_type: str = "application/octet-stream",
+        content_type: str = DEFAULT_CONTENT_TYPE,
     ) -> str:
         object_key = self._object_key(key)
 
@@ -111,6 +112,21 @@ class S3ObjectStorage:
                 raise StorageNotFoundError(f"No existe el archivo '{key}'.") from exc
             logger.exception("S3 read fallido bucket=%s key=%s", self._bucket, object_key)
             raise StorageError(f"No fue posible leer el objeto en S3: {exc}") from exc
+
+    async def content_type_of(self, key: str) -> str:
+        object_key = self._object_key(key)
+
+        def _head() -> str:
+            response = self._client.head_object(Bucket=self._bucket, Key=object_key)
+            return response.get("ContentType") or DEFAULT_CONTENT_TYPE
+
+        try:
+            return await asyncio.to_thread(_head)
+        except ClientError as exc:
+            if _is_missing(exc):
+                raise StorageNotFoundError(f"No existe el archivo '{key}'.") from exc
+            logger.exception("S3 head fallido bucket=%s key=%s", self._bucket, object_key)
+            raise StorageError(f"No fue posible consultar el objeto en S3: {exc}") from exc
 
     async def generate_presigned_url(self, key: str, expires_in: int = 3600) -> str:
         object_key = self._object_key(key)

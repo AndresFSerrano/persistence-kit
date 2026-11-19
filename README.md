@@ -239,19 +239,43 @@ It is off by default. `read_upload(file)` takes a FastAPI `UploadFile`, or
 anything with an async `read(size)` and a `content_type`, reads at most
 `max_bytes + 1` bytes, validates them and returns them.
 
+When you also need the type, `read_validated_upload(file)` runs the same checks
+and returns a `ValidatedUpload`: the `data` and the `content_type` that passed
+them. Store the file with that type and it is served with it later.
+
+```python
+upload = await media.read_validated_upload(file)
+await media.upload(key, upload.data, upload.content_type)
+```
+
+Every storage keeps the content type it was given on `upload` and `upload_file`,
+and `content_type_of(key)` returns it, on the storage itself or on the media
+storage. S3 reads it from the object's head. `LocalObjectStorage` writes it to a
+`.content-types/` folder at its root that mirrors your keys:
+`.content-types/abc/main.png` holds `image/png`. That folder is reserved:
+`list_keys` never returns it, `delete` and the scope cleanups remove the type with
+the object, and a key inside it raises `StoragePathError`. A local object saved
+before 3.21.0 has no stored type, so its type is guessed from the key's extension,
+or `application/octet-stream` when there is none. A key with nothing stored
+raises `StorageNotFoundError`.
+
 `read(key)` gives back the bytes stored under a key, on the storage itself or on
 the media storage, the same way on disk and on S3. A key with nothing stored
 raises `StorageNotFoundError`; any other S3 failure raises `StorageError`. Use it
 when the service itself needs the content, such as filling a template; to hand a
 file to a browser, keep using `generate_presigned_url` or `serve_media_object`.
 
-`serve_media_object(storage, key)` sends the local file, or redirects to a
-presigned URL on S3. A local key with no file raises `NotFoundException`, so it
-stays a 404 when a use case wrapped in `handle_service_errors` calls it.
+`serve_media_object(storage, key)` sends the local file with its stored type, or
+redirects to a presigned URL on S3, which sends the type S3 stored. Pass
+`media_type=` to send another one. A stored HTML, SVG or other XML type goes out
+as an attachment, so it never renders on your API's origin. A local key with no file
+raises `NotFoundException`, so it stays a 404 when a use case wrapped in
+`handle_service_errors` calls it.
 
 FastAPI apps can mount `build_local_export_storage_router(...)` to serve local
 files, passing their settings provider, an optional current-user dependency, and
-an authorization callback.
+an authorization callback. It sends each file with its stored type; a file
+stored without one keeps the type `guess_export_media_type` gives its extension.
 
 Needs `[storage-s3]` for S3 and `[storage-routes]` for the route.
 
@@ -636,7 +660,7 @@ poetry install --with dev --all-extras
 poetry run pytest -q
 ```
 
-Current baseline: **627 tests passing** (version 3.14.0). Async tests use
+Current baseline: **793 tests passing** (version 3.21.0). Async tests use
 `pytest-asyncio` in strict mode, so each one carries `@pytest.mark.asyncio`.
 
 `tests/test_capabilities.py` guards the lazy-import promise: it fails if merely

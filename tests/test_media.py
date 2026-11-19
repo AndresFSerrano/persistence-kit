@@ -12,6 +12,8 @@ from persistence_kit.storage import (
     LocalObjectStorage,
     MediaStorage,
     StorageConfigError,
+    StorageNotFoundError,
+    ValidatedUpload,
     build_media_storage,
 )
 import persistence_kit.storage.factory as factory_mod
@@ -29,15 +31,20 @@ class FakeS3Client:
         self.paginate_calls: list[dict] = []
         self.list_pages: list[list[dict]] = []
         self.objects: dict[tuple[str, str], bytes] = {}
+        self.content_types: dict[tuple[str, str], str] = {}
 
     def put_object(self, **kwargs) -> None:
         self.put_calls.append(kwargs)
+        self.content_types[(kwargs["Bucket"], kwargs["Key"])] = kwargs["ContentType"]
 
     def delete_object(self, **kwargs) -> None:
         self.delete_calls.append(kwargs)
 
     def get_object(self, *, Bucket: str, Key: str) -> dict:
         return {"Body": BytesIO(self.objects[(Bucket, Key)])}
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict:
+        return {"ContentType": self.content_types[(Bucket, Key)]}
 
     def get_paginator(self, name: str):
         client = self
@@ -302,6 +309,94 @@ async def test_read_upload_accepts_a_fastapi_upload_file(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_read_validated_upload_returns_the_bytes_with_the_validated_type(
+    tmp_path: Path,
+):
+    media = _verifying_media(tmp_path, max_bytes=64)
+    upload = FakeUpload(PNG_BYTES, "image/png")
+
+    validated = await media.read_validated_upload(upload)
+
+    assert validated == ValidatedUpload(data=PNG_BYTES, content_type="image/png")
+    assert upload.read_sizes == [65]
+
+
+@pytest.mark.asyncio
+async def test_read_validated_upload_accepts_a_fastapi_upload_file(tmp_path: Path):
+    media = _verifying_media(tmp_path)
+    upload = UploadFile(
+        file=BytesIO(b"%PDF-1.7\n"),
+        filename="report.pdf",
+        headers=Headers({"content-type": "application/pdf"}),
+    )
+
+    validated = await media.read_validated_upload(upload)
+
+    assert validated.data == b"%PDF-1.7\n"
+    assert validated.content_type == "application/pdf"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "content_type", "detail"),
+    [
+        (PNG_BYTES, "text/plain", "Tipo de archivo no permitido."),
+        (PNG_BYTES, None, "Tipo de archivo no permitido."),
+        (b"%PDF-1.7\n", "image/png", "El contenido del archivo no corresponde a su tipo"),
+        (PNG_BYTES + b"\x00" * 64, "image/png", "El archivo excede el tamaño máximo"),
+        (b"", "image/png", "El archivo está vacío."),
+    ],
+)
+async def test_read_validated_upload_rejects_what_read_upload_rejects(
+    tmp_path: Path, content: bytes, content_type: str | None, detail: str
+):
+    media = _verifying_media(tmp_path, max_bytes=len(PNG_BYTES))
+    upload = FakeUpload(content, content_type)
+
+    with pytest.raises(ValidationException) as exc:
+        await media.read_validated_upload(upload)
+
+    assert exc.value.detail.startswith(detail)
+    assert upload.read_sizes == [len(PNG_BYTES) + 1]
+
+
+def test_validated_upload_is_immutable():
+    validated = ValidatedUpload(data=PNG_BYTES, content_type="image/png")
+
+    with pytest.raises(AttributeError):
+        validated.content_type = "image/gif"
+
+
+@pytest.mark.asyncio
+async def test_validated_upload_type_is_kept_by_local_storage(tmp_path: Path):
+    media = _verifying_media(tmp_path / "media")
+    validated = await media.read_validated_upload(FakeUpload(PNG_BYTES, "image/png"))
+
+    await media.upload("abc/main", validated.data, validated.content_type)
+
+    assert await media.content_type_of("abc/main") == "image/png"
+    assert await media.read("abc/main") == PNG_BYTES
+
+
+@pytest.mark.asyncio
+async def test_content_type_of_a_missing_key_raises_not_found(tmp_path: Path):
+    media = _make_media(tmp_path / "media")
+
+    with pytest.raises(StorageNotFoundError):
+        await media.content_type_of("abc/missing.png")
+
+
+@pytest.mark.asyncio
+async def test_content_type_of_on_s3_reads_the_stored_type(s3_client: FakeS3Client):
+    media = build_media_storage(_s3_settings(), namespace="avatars", url_prefix="/media/avatars")
+
+    await media.upload("u1/main", PNG_BYTES, "image/png")
+
+    assert await media.content_type_of("u1/main") == "image/png"
+    assert s3_client.content_types == {("my-media", "avatars/u1/main"): "image/png"}
+
+
+@pytest.mark.asyncio
 async def test_read_goes_through_the_backend(tmp_path: Path):
     media = _make_media(tmp_path / "media")
     await media.upload("abc/main.png", PNG_BYTES, "image/png")
@@ -394,6 +489,34 @@ async def test_remove_scope_dir_removes_all_keys_in_scope(tmp_path: Path):
 
     assert not (tmp_path / "abc").exists()
     assert (tmp_path / "other" / "main.png").read_bytes() == b"z"
+
+
+@pytest.mark.asyncio
+async def test_remove_other_files_in_scope_drops_only_the_stale_content_types(
+    tmp_path: Path,
+):
+    media = _make_media(tmp_path)
+    await media.upload("abc/main.jpg", b"old", "image/jpeg")
+    await media.upload("abc/main.png", b"new", "image/png")
+
+    await media.remove_other_files_in_scope("abc", "abc/main.png")
+
+    content_types = tmp_path / ".content-types" / "abc"
+    assert sorted(path.name for path in content_types.iterdir()) == ["main.png"]
+    assert await media.content_type_of("abc/main.png") == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_remove_scope_dir_also_removes_the_scope_content_types(tmp_path: Path):
+    media = _make_media(tmp_path)
+    await media.upload("abc/main.png", b"x", "image/png")
+    await media.upload("abc/nested/extra.png", b"y", "image/png")
+    await media.upload("other/main.png", b"z", "image/png")
+
+    await media.remove_scope_dir("abc")
+
+    assert not (tmp_path / ".content-types" / "abc").exists()
+    assert await media.content_type_of("other/main.png") == "image/png"
 
 
 @pytest.mark.asyncio

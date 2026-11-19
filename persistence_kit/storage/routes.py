@@ -12,6 +12,7 @@ from starlette.responses import Response
 
 from persistence_kit.api.exceptions import NotFoundException
 from persistence_kit.settings import PersistenceKitSettings
+from persistence_kit.storage.contracts import DEFAULT_CONTENT_TYPE
 from persistence_kit.storage.errors import StorageConfigError
 from persistence_kit.storage.factory import get_export_storage
 from persistence_kit.storage.local import LocalExportStorageProvider, LocalObjectStorage
@@ -88,8 +89,15 @@ async def serve_local_export(
     return FileResponse(
         path=file_path,
         filename=file_path.name,
-        media_type=guess_export_media_type(file_path),
+        media_type=await _export_media_type(storage, key, file_path),
     )
+
+
+async def _export_media_type(storage: LocalObjectStorage, key: str, file_path: Path) -> str:
+    stored_type = await storage.content_type_of(key)
+    if stored_type == DEFAULT_CONTENT_TYPE:
+        return guess_export_media_type(file_path)
+    return stored_type
 
 
 def guess_export_media_type(file_path: Path) -> str:
@@ -97,7 +105,7 @@ def guess_export_media_type(file_path: Path) -> str:
         return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     if file_path.suffix.lower() == ".csv":
         return "text/csv"
-    return "application/octet-stream"
+    return DEFAULT_CONTENT_TYPE
 
 
 def _get_local_export_storage(
@@ -133,9 +141,24 @@ async def serve_media_object(
         file_path = backend.get_file_path(key)
         if not file_path.is_file():
             raise NotFoundException(detail="Archivo no encontrado.")
-        return FileResponse(
-            path=file_path,
-            media_type=media_type or "application/octet-stream",
-        )
+        if media_type:
+            return FileResponse(path=file_path, media_type=media_type)
+        return await _stored_type_response(backend, key, file_path)
     presigned_url = await storage.generate_presigned_url(key)
     return RedirectResponse(url=presigned_url)
+
+
+async def _stored_type_response(
+    backend: LocalObjectStorage,
+    key: str,
+    file_path: Path,
+) -> FileResponse:
+    stored_type = await backend.content_type_of(key)
+    if _renders_active_content(stored_type):
+        return FileResponse(path=file_path, media_type=stored_type, filename=file_path.name)
+    return FileResponse(path=file_path, media_type=stored_type)
+
+
+def _renders_active_content(content_type: str) -> bool:
+    base_type = content_type.split(";", 1)[0].strip().lower()
+    return base_type == "text/html" or base_type.endswith(("/xml", "+xml"))
