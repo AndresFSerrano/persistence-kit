@@ -10,6 +10,10 @@ class StoragePathError(StorageError, ValueError):
     """Raised when a storage key resolves outside the configured storage root."""
 
 
+class StorageNotFoundError(StorageError):
+    """Raised when no object is stored under a key."""
+
+
 class StorageUploadError(StorageError):
     """Raised when an upload operation fails."""
 

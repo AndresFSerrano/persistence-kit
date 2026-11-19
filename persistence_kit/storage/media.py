@@ -125,6 +125,9 @@ class MediaStorage:
     ) -> str:
         return await self._storage.upload_file(key, file_path, content_type=content_type)
 
+    async def read(self, key: str) -> bytes:
+        return await self._storage.read(key)
+
     async def delete(self, key: str) -> None:
         await self._storage.delete(key)
 

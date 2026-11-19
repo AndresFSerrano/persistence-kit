@@ -239,6 +239,12 @@ It is off by default. `read_upload(file)` takes a FastAPI `UploadFile`, or
 anything with an async `read(size)` and a `content_type`, reads at most
 `max_bytes + 1` bytes, validates them and returns them.
 
+`read(key)` gives back the bytes stored under a key, on the storage itself or on
+the media storage, the same way on disk and on S3. A key with nothing stored
+raises `StorageNotFoundError`; any other S3 failure raises `StorageError`. Use it
+when the service itself needs the content, such as filling a template; to hand a
+file to a browser, keep using `generate_presigned_url` or `serve_media_object`.
+
 FastAPI apps can mount `build_local_export_storage_router(...)` to serve local
 files, passing their settings provider, an optional current-user dependency, and
 an authorization callback.

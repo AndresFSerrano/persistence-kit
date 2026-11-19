@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from persistence_kit.storage.errors import StoragePathError
+from persistence_kit.storage.errors import StorageNotFoundError, StoragePathError
 
 
 def _b64encode(data: bytes) -> str:
@@ -37,11 +37,14 @@ class LocalObjectStorage:
         self._download_route_path = "/" + download_route_path.strip("/")
         self._base_dir.mkdir(parents=True, exist_ok=True)
 
-    def get_file_path(self, key: str) -> Path:
-        normalized = Path(key)
-        destination = (self._base_dir / normalized).resolve()
+    def _resolve(self, key: str) -> Path:
+        destination = (self._base_dir / Path(key)).resolve()
         if self._base_dir not in destination.parents and destination != self._base_dir:
             raise StoragePathError(f"Ruta de exportacion invalida: '{key}'.")
+        return destination
+
+    def get_file_path(self, key: str) -> Path:
+        destination = self._resolve(key)
         destination.parent.mkdir(parents=True, exist_ok=True)
         return destination
 
@@ -66,6 +69,13 @@ class LocalObjectStorage:
         destination = self.get_file_path(key)
         await asyncio.to_thread(shutil.copyfile, file_path, destination)
         return key
+
+    async def read(self, key: str) -> bytes:
+        source = self._resolve(key)
+        try:
+            return await asyncio.to_thread(source.read_bytes)
+        except (FileNotFoundError, IsADirectoryError) as exc:
+            raise StorageNotFoundError(f"No existe el archivo '{key}'.") from exc
 
     async def generate_presigned_url(self, key: str, expires_in: int = 3600) -> str:
         encoded_key = quote(key, safe="/")
