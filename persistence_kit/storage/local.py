@@ -72,10 +72,9 @@ class LocalObjectStorage:
 
     async def read(self, key: str) -> bytes:
         source = self._resolve(key)
-        try:
-            return await asyncio.to_thread(source.read_bytes)
-        except (FileNotFoundError, IsADirectoryError) as exc:
-            raise StorageNotFoundError(f"No existe el archivo '{key}'.") from exc
+        if not source.is_file():
+            raise StorageNotFoundError(f"No existe el archivo '{key}'.")
+        return await asyncio.to_thread(source.read_bytes)
 
     async def generate_presigned_url(self, key: str, expires_in: int = 3600) -> str:
         encoded_key = quote(key, safe="/")
