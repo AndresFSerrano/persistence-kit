@@ -5,6 +5,8 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 
+from persistence_kit.api import handle_service_errors
+from persistence_kit.api.exceptions import NotFoundException
 from persistence_kit.settings import PersistenceKitSettings
 from persistence_kit.storage import (
     MediaStorage,
@@ -170,8 +172,30 @@ async def test_serve_media_object_raises_404_when_local_file_missing(
         settings, namespace="product_images", url_prefix="/media/product_images"
     )
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(NotFoundException) as exc:
         await serve_media_object(storage, "abc/missing.png")
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_serve_media_object_keeps_404_inside_handle_service_errors(
+    tmp_path: Path, reset_media_factory_caches
+):
+    settings = PersistenceKitSettings(
+        local_media_storage_dir=str(tmp_path),
+        media_storage_provider="local",
+    )
+    storage = build_media_storage(
+        settings, namespace="product_images", url_prefix="/media/product_images"
+    )
+
+    @handle_service_errors
+    async def download():
+        return await serve_media_object(storage, "abc/missing.png")
+
+    with pytest.raises(NotFoundException) as exc:
+        await download()
 
     assert exc.value.status_code == 404
 

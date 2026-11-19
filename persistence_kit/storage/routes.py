@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from starlette import status
 from starlette.responses import Response
 
+from persistence_kit.api.exceptions import NotFoundException
 from persistence_kit.settings import PersistenceKitSettings
 from persistence_kit.storage.errors import StorageConfigError
 from persistence_kit.storage.factory import get_export_storage
@@ -131,10 +132,7 @@ async def serve_media_object(
     if isinstance(backend, LocalObjectStorage):
         file_path = backend.get_file_path(key)
         if not file_path.is_file():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Archivo no encontrado.",
-            )
+            raise NotFoundException(detail="Archivo no encontrado.")
         return FileResponse(
             path=file_path,
             media_type=media_type or "application/octet-stream",

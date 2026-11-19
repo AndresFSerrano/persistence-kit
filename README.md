@@ -245,6 +245,10 @@ raises `StorageNotFoundError`; any other S3 failure raises `StorageError`. Use i
 when the service itself needs the content, such as filling a template; to hand a
 file to a browser, keep using `generate_presigned_url` or `serve_media_object`.
 
+`serve_media_object(storage, key)` sends the local file, or redirects to a
+presigned URL on S3. A local key with no file raises `NotFoundException`, so it
+stays a 404 when a use case wrapped in `handle_service_errors` calls it.
+
 FastAPI apps can mount `build_local_export_storage_router(...)` to serve local
 files, passing their settings provider, an optional current-user dependency, and
 an authorization callback.
