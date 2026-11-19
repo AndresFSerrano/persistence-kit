@@ -2,6 +2,7 @@ from persistence_kit.storage.contracts import ObjectStorage
 from persistence_kit.storage.errors import (
     StorageConfigError,
     StorageError,
+    StorageNotFoundError,
     StoragePathError,
     StoragePresignError,
     StorageUploadError,
@@ -31,6 +32,7 @@ __all__ = [
     "ObjectStorage",
     "StorageError",
     "StorageConfigError",
+    "StorageNotFoundError",
     "StoragePathError",
     "StorageUploadError",
     "StoragePresignError",

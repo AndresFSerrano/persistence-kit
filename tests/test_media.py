@@ -28,12 +28,16 @@ class FakeS3Client:
         self.delete_calls: list[dict] = []
         self.paginate_calls: list[dict] = []
         self.list_pages: list[list[dict]] = []
+        self.objects: dict[tuple[str, str], bytes] = {}
 
     def put_object(self, **kwargs) -> None:
         self.put_calls.append(kwargs)
 
     def delete_object(self, **kwargs) -> None:
         self.delete_calls.append(kwargs)
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict:
+        return {"Body": BytesIO(self.objects[(Bucket, Key)])}
 
     def get_paginator(self, name: str):
         client = self
@@ -295,6 +299,22 @@ async def test_read_upload_accepts_a_fastapi_upload_file(tmp_path: Path):
     )
 
     assert await media.read_upload(upload) == PNG_BYTES
+
+
+@pytest.mark.asyncio
+async def test_read_goes_through_the_backend(tmp_path: Path):
+    media = _make_media(tmp_path / "media")
+    await media.upload("abc/main.png", PNG_BYTES, "image/png")
+
+    assert await media.read("abc/main.png") == PNG_BYTES
+
+
+@pytest.mark.asyncio
+async def test_read_on_s3_uses_the_namespace_folder(s3_client: FakeS3Client):
+    s3_client.objects[("my-media", "avatars/u1/main.png")] = PNG_BYTES
+    media = build_media_storage(_s3_settings(), namespace="avatars", url_prefix="/media/avatars")
+
+    assert await media.read("u1/main.png") == PNG_BYTES
 
 
 @pytest.mark.asyncio

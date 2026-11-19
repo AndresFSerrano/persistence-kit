@@ -1,3 +1,4 @@
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -7,13 +8,18 @@ import persistence_kit.storage.s3 as mod
 from persistence_kit.storage import (
     S3ExportStorageProvider,
     StorageConfigError,
+    StorageError,
+    StorageNotFoundError,
     StoragePresignError,
     StorageUploadError,
 )
 
 
 class FakeClientError(Exception):
-    pass
+    def __init__(self, message: str = "", code: str | None = None) -> None:
+        super().__init__(message)
+        if code is not None:
+            self.response = {"Error": {"Code": code}}
 
 
 class FakeS3Client:
@@ -24,11 +30,20 @@ class FakeS3Client:
         self.put_error: Exception | None = None
         self.upload_fileobj_error: Exception | None = None
         self.presign_error: Exception | None = None
+        self.objects: dict[tuple[str, str], bytes] = {}
+        self.get_calls: list[dict] = []
+        self.get_error: Exception | None = None
 
     def put_object(self, **kwargs) -> None:
         self.put_calls.append(kwargs)
         if self.put_error is not None:
             raise self.put_error
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict:
+        self.get_calls.append({"Bucket": Bucket, "Key": Key})
+        if self.get_error is not None:
+            raise self.get_error
+        return {"Body": BytesIO(self.objects[(Bucket, Key)])}
 
     def upload_fileobj(self, **kwargs) -> None:
         file_obj = kwargs["Fileobj"]
@@ -165,3 +180,36 @@ async def test_generate_presigned_url_raises_http_exception_when_s3_fails(fake_s
         await provider.generate_presigned_url("reports/file.xlsx")
 
     assert "No fue posible generar la URL prefirmada" in str(err.value)
+
+
+@pytest.mark.asyncio
+async def test_read_gets_the_object_under_the_prefix(fake_s3_client: FakeS3Client):
+    fake_s3_client.objects[("media", "templates/v1.docx")] = b"word-bytes"
+    provider = S3ExportStorageProvider(bucket="media", region="us-east-1", prefix="templates")
+
+    assert await provider.read("v1.docx") == b"word-bytes"
+    assert fake_s3_client.get_calls == [{"Bucket": "media", "Key": "templates/v1.docx"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["NoSuchKey", "404"])
+async def test_read_of_a_missing_key_raises_not_found(fake_s3_client: FakeS3Client, code: str):
+    fake_s3_client.get_error = FakeClientError("missing", code=code)
+    provider = S3ExportStorageProvider(bucket="media", region="us-east-1")
+
+    with pytest.raises(StorageNotFoundError) as err:
+        await provider.read("templates/missing.docx")
+
+    assert "templates/missing.docx" in str(err.value)
+
+
+@pytest.mark.asyncio
+async def test_read_raises_storage_error_when_s3_fails(fake_s3_client: FakeS3Client):
+    fake_s3_client.get_error = FakeClientError("boom", code="AccessDenied")
+    provider = S3ExportStorageProvider(bucket="media", region="us-east-1")
+
+    with pytest.raises(StorageError) as err:
+        await provider.read("templates/v1.docx")
+
+    assert not isinstance(err.value, StorageNotFoundError)
+    assert "No fue posible leer el objeto en S3" in str(err.value)

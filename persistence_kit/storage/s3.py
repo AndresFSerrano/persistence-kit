@@ -7,6 +7,7 @@ from pathlib import Path
 from persistence_kit.storage.errors import (
     StorageConfigError,
     StorageError,
+    StorageNotFoundError,
     StoragePresignError,
     StorageUploadError,
 )
@@ -19,6 +20,13 @@ except ImportError:  # pragma: no cover - handled at runtime.
     ClientError = Exception
 
 logger = logging.getLogger(__name__)
+
+_MISSING_CODES = frozenset({"NoSuchKey", "404"})
+
+
+def _is_missing(exc: Exception) -> bool:
+    response = getattr(exc, "response", None) or {}
+    return response.get("Error", {}).get("Code") in _MISSING_CODES
 
 
 class S3ObjectStorage:
@@ -88,6 +96,21 @@ class S3ObjectStorage:
 
         logger.info("S3 file upload exitoso bucket=%s key=%s", self._bucket, object_key)
         return key
+
+    async def read(self, key: str) -> bytes:
+        object_key = self._object_key(key)
+
+        def _read() -> bytes:
+            response = self._client.get_object(Bucket=self._bucket, Key=object_key)
+            return response["Body"].read()
+
+        try:
+            return await asyncio.to_thread(_read)
+        except ClientError as exc:
+            if _is_missing(exc):
+                raise StorageNotFoundError(f"No existe el archivo '{key}'.") from exc
+            logger.exception("S3 read fallido bucket=%s key=%s", self._bucket, object_key)
+            raise StorageError(f"No fue posible leer el objeto en S3: {exc}") from exc
 
     async def generate_presigned_url(self, key: str, expires_in: int = 3600) -> str:
         object_key = self._object_key(key)

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from persistence_kit.storage import LocalExportStorageProvider
+from persistence_kit.storage import LocalExportStorageProvider, StorageNotFoundError
 
 
 @pytest.mark.asyncio
@@ -62,3 +62,50 @@ async def test_generate_presigned_url_token_is_valid_for_key(tmp_path: Path):
     token = uri.split("token=")[1]
 
     assert provider.validate_download_token("exports/test/report.xlsx", token) is True
+
+
+def _local(tmp_path: Path) -> LocalExportStorageProvider:
+    return LocalExportStorageProvider(
+        base_dir=str(tmp_path),
+        public_base_url="http://localhost:8000",
+        signing_secret="test-secret-key-with-32-bytes-min",
+    )
+
+
+@pytest.mark.asyncio
+async def test_read_returns_the_stored_bytes(tmp_path: Path):
+    provider = _local(tmp_path)
+    await provider.upload("templates/v1.docx", b"word-bytes")
+
+    assert await provider.read("templates/v1.docx") == b"word-bytes"
+
+
+@pytest.mark.asyncio
+async def test_read_of_a_missing_key_raises_not_found_without_creating_folders(tmp_path: Path):
+    provider = _local(tmp_path)
+
+    with pytest.raises(StorageNotFoundError) as err:
+        await provider.read("templates/missing.docx")
+
+    assert "templates/missing.docx" in str(err.value)
+    assert not (tmp_path / "templates").exists()
+
+
+@pytest.mark.asyncio
+async def test_read_of_a_folder_raises_not_found(tmp_path: Path):
+    provider = _local(tmp_path)
+    await provider.upload("templates/v1.docx", b"word-bytes")
+
+    with pytest.raises(StorageNotFoundError):
+        await provider.read("templates")
+
+
+@pytest.mark.asyncio
+async def test_read_rejects_parent_traversal(tmp_path: Path):
+    (tmp_path.parent / "outside.txt").write_bytes(b"secret")
+    provider = _local(tmp_path)
+
+    with pytest.raises(ValueError) as err:
+        await provider.read("../outside.txt")
+
+    assert "Ruta de exportacion invalida" in str(err.value)
