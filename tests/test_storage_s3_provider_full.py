@@ -33,6 +33,9 @@ class FakeS3Client:
         self.objects: dict[tuple[str, str], bytes] = {}
         self.get_calls: list[dict] = []
         self.get_error: Exception | None = None
+        self.heads: dict[tuple[str, str], dict] = {}
+        self.head_calls: list[dict] = []
+        self.head_error: Exception | None = None
 
     def put_object(self, **kwargs) -> None:
         self.put_calls.append(kwargs)
@@ -44,6 +47,12 @@ class FakeS3Client:
         if self.get_error is not None:
             raise self.get_error
         return {"Body": BytesIO(self.objects[(Bucket, Key)])}
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict:
+        self.head_calls.append({"Bucket": Bucket, "Key": Key})
+        if self.head_error is not None:
+            raise self.head_error
+        return self.heads[(Bucket, Key)]
 
     def upload_fileobj(self, **kwargs) -> None:
         file_obj = kwargs["Fileobj"]
@@ -213,3 +222,56 @@ async def test_read_raises_storage_error_when_s3_fails(fake_s3_client: FakeS3Cli
 
     assert not isinstance(err.value, StorageNotFoundError)
     assert "No fue posible leer el objeto en S3" in str(err.value)
+
+
+@pytest.mark.asyncio
+async def test_content_type_of_reads_the_object_head_under_the_prefix(
+    fake_s3_client: FakeS3Client,
+):
+    fake_s3_client.heads[("media", "avatars/u1/main")] = {
+        "ContentType": "image/png",
+        "ContentLength": 3,
+    }
+    provider = S3ExportStorageProvider(bucket="media", region="us-east-1", prefix="avatars")
+
+    assert await provider.content_type_of("u1/main") == "image/png"
+    assert fake_s3_client.head_calls == [{"Bucket": "media", "Key": "avatars/u1/main"}]
+    assert fake_s3_client.get_calls == []
+
+
+@pytest.mark.asyncio
+async def test_content_type_of_without_a_stored_type_is_the_default(
+    fake_s3_client: FakeS3Client,
+):
+    fake_s3_client.heads[("media", "u1/main")] = {"ContentLength": 3}
+    provider = S3ExportStorageProvider(bucket="media", region="us-east-1")
+
+    assert await provider.content_type_of("u1/main") == "application/octet-stream"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["NoSuchKey", "404"])
+async def test_content_type_of_a_missing_key_raises_not_found(
+    fake_s3_client: FakeS3Client, code: str
+):
+    fake_s3_client.head_error = FakeClientError("missing", code=code)
+    provider = S3ExportStorageProvider(bucket="media", region="us-east-1")
+
+    with pytest.raises(StorageNotFoundError) as err:
+        await provider.content_type_of("avatars/missing.png")
+
+    assert "avatars/missing.png" in str(err.value)
+
+
+@pytest.mark.asyncio
+async def test_content_type_of_raises_storage_error_when_s3_fails(
+    fake_s3_client: FakeS3Client,
+):
+    fake_s3_client.head_error = FakeClientError("boom", code="AccessDenied")
+    provider = S3ExportStorageProvider(bucket="media", region="us-east-1")
+
+    with pytest.raises(StorageError) as err:
+        await provider.content_type_of("avatars/u1.png")
+
+    assert not isinstance(err.value, StorageNotFoundError)
+    assert "No fue posible consultar el objeto en S3" in str(err.value)

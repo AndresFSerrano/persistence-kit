@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
+DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
 
 class ObjectStorage(Protocol):
@@ -9,14 +12,14 @@ class ObjectStorage(Protocol):
         self,
         key: str,
         data: bytes,
-        content_type: str = "application/octet-stream",
+        content_type: str = DEFAULT_CONTENT_TYPE,
     ) -> str: ...
 
     async def upload_file(
         self,
         key: str,
         file_path: Path,
-        content_type: str = "application/octet-stream",
+        content_type: str = DEFAULT_CONTENT_TYPE,
     ) -> str: ...
 
     async def generate_presigned_url(
@@ -26,6 +29,8 @@ class ObjectStorage(Protocol):
     ) -> str: ...
 
     async def read(self, key: str) -> bytes: ...
+
+    async def content_type_of(self, key: str) -> str: ...
 
     async def delete(self, key: str) -> None: ...
 
@@ -37,3 +42,9 @@ class UploadedFile(Protocol):
     def content_type(self) -> str | None: ...
 
     async def read(self, size: int = -1) -> bytes: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class ValidatedUpload:
+    data: bytes
+    content_type: str

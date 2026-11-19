@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from persistence_kit.storage.contracts import ObjectStorage, UploadedFile
+from persistence_kit.storage.contracts import (
+    DEFAULT_CONTENT_TYPE,
+    ObjectStorage,
+    UploadedFile,
+    ValidatedUpload,
+)
 
 SignaturePart = tuple[int, bytes]
 Signature = tuple[SignaturePart, ...]
@@ -104,16 +109,21 @@ class MediaStorage:
                 f"El contenido del archivo no corresponde a su tipo ({content_type})."
             )
 
-    async def read_upload(self, upload: UploadedFile) -> bytes:
+    async def read_validated_upload(self, upload: UploadedFile) -> ValidatedUpload:
         data = await upload.read(self._max_bytes + 1)
-        self.validate_upload(data, upload.content_type or "")
-        return data
+        content_type = upload.content_type or ""
+        self.validate_upload(data, content_type)
+        return ValidatedUpload(data=data, content_type=content_type)
+
+    async def read_upload(self, upload: UploadedFile) -> bytes:
+        validated = await self.read_validated_upload(upload)
+        return validated.data
 
     async def upload(
         self,
         key: str,
         data: bytes,
-        content_type: str = "application/octet-stream",
+        content_type: str = DEFAULT_CONTENT_TYPE,
     ) -> str:
         return await self._storage.upload(key, data, content_type=content_type)
 
@@ -121,12 +131,15 @@ class MediaStorage:
         self,
         key: str,
         file_path: Path,
-        content_type: str = "application/octet-stream",
+        content_type: str = DEFAULT_CONTENT_TYPE,
     ) -> str:
         return await self._storage.upload_file(key, file_path, content_type=content_type)
 
     async def read(self, key: str) -> bytes:
         return await self._storage.read(key)
+
+    async def content_type_of(self, key: str) -> str:
+        return await self._storage.content_type_of(key)
 
     async def delete(self, key: str) -> None:
         await self._storage.delete(key)
