@@ -5,7 +5,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
+
+INCREMENT_ATTEMPTS = 3
 
 
 class MongoCache:
@@ -57,6 +60,32 @@ class MongoCache:
             return False
         return result.upserted_id is not None
 
+    async def increment(self, key: str, ttl_seconds: float | None = None) -> int:
+        """Suma en un solo ``find_one_and_update`` con pipeline (Mongo 4.2+).
+
+        El pipeline decide en el servidor si el documento sigue vigente: si no
+        existe o su ``expiresAt`` ya paso (el monitor TTL aun no lo borra),
+        arranca en 1 con vencimiento nuevo; si esta vigente, suma y conserva el
+        suyo. Dos upserts simultaneos de una clave nueva pueden chocar con
+        ``DuplicateKeyError``; el perdedor reintenta y suma sobre el ganador.
+        """
+        await self._ensure_index()
+        for _ in range(INCREMENT_ATTEMPTS - 1):
+            try:
+                return await self._increment_once(key, ttl_seconds)
+            except DuplicateKeyError:
+                continue
+        return await self._increment_once(key, ttl_seconds)
+
+    async def _increment_once(self, key: str, ttl_seconds: float | None) -> int:
+        doc = await self._col.find_one_and_update(
+            {"_id": key},
+            _increment_pipeline(datetime.now(timezone.utc), ttl_seconds),
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        return doc["value"]
+
     async def delete(self, key: str) -> None:
         await self._col.delete_one({"_id": key})
 
@@ -67,3 +96,26 @@ class MongoCache:
             query = {}
         result = await self._col.delete_many(query)
         return result.deleted_count
+
+
+def _increment_pipeline(now: datetime, ttl_seconds: float | None) -> list[dict[str, Any]]:
+    starts_over = {
+        "$or": [
+            {"$eq": [{"$type": "$value"}, "missing"]},
+            {
+                "$and": [
+                    {"$ne": [{"$ifNull": ["$expiresAt", None]}, None]},
+                    {"$lte": ["$expiresAt", now]},
+                ]
+            },
+        ]
+    }
+    fresh_expiry: Any = now + timedelta(seconds=ttl_seconds) if ttl_seconds else "$$REMOVE"
+    return [
+        {
+            "$set": {
+                "value": {"$cond": [starts_over, 1, {"$add": ["$value", 1]}]},
+                "expiresAt": {"$cond": [starts_over, fresh_expiry, "$expiresAt"]},
+            }
+        }
+    ]

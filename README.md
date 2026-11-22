@@ -184,7 +184,7 @@ add, not an obscure `ImportError`.
 | `storage/` | Object storage: local directory or S3, with presigned URLs |
 | `security/` | Identity providers and JWT verifiers, memory or Cognito, and the encrypted envelope format |
 | `restclient/` | HTTP client with pluggable auth, endpoint resolution, retries and DTO decoding |
-| `cache/` | Key-value cache with TTL: memory, Mongo or DynamoDB |
+| `cache/` | Key-value cache with TTL and atomic counters: memory, Mongo or DynamoDB |
 | `mail/` | Outbound mail through an SMTP relay, with templates that live in the app |
 | `resilience/` | Circuit breaker, shared by anything that calls out |
 | `api/` | Reusable FastAPI pieces: error handlers, pagination, rate limiting, encrypted routes |
@@ -305,6 +305,47 @@ application. The kit only answers "who is this".
 
 Needs `[security]`, or `[security-cognito]` for Cognito.
 
+### Auth rate limit
+
+```python
+from fastapi import Depends
+
+from persistence_kit.api import build_auth_rate_limit_dependency
+
+login_limit = build_auth_rate_limit_dependency(
+    scope="auth-login",
+    limit_setting_name="auth_login_rate_limit",
+    settings_dep=get_settings,
+)
+
+
+@router.post("/login", dependencies=[Depends(login_limit)])
+async def login(payload: LoginRequest) -> LoginResponse:
+    ...
+```
+
+The dependency caps attempts per client address and answers 429 with a
+`Retry-After`. `TRUSTED_PROXY_HOPS` decides which address is the client.
+
+Unless the app puts its own limiter in `app.state.auth_rate_limiter`, it uses
+`build_rate_limiter()`: a `CacheRateLimiter` over `get_cache("rate-limit")`, so
+`CACHE_BACKEND` decides where the counts live. With `CACHE_BACKEND=dynamodb` (or
+`mongo`) every replica counts against the same limit and a deploy does not reset
+it; with `memory` each process counts on its own. `CacheRateLimiter(cache)` takes
+any other `Cache` as well.
+
+It counts with an approximate sliding window: one counter per fixed window, kept
+by the cache for two windows, plus the previous window weighted by how much of it
+still falls inside the last `AUTH_RATE_LIMIT_WINDOW_SECONDS`. A rejected attempt
+counts too, so a client that keeps hammering stays blocked, and `Retry-After` is
+the first second its next attempt would pass.
+
+`InMemoryRateLimiter` is still available for apps that set it explicitly; it
+keeps the count inside the process.
+
+With `STAGE=production` the limit cannot be turned off and the cache cannot be
+`memory`; see [Settings](#settings).
+
 ## Encrypted payloads
 
 For data that should not be readable between the browser and your handler, not
@@ -353,7 +394,8 @@ KMS. Clients fetch the matching public key from your own endpoint, built on
 
 Outside the local stage the kit logs a warning when `ENCRYPTED_TYPE=memory` or
 `CACHE_BACKEND=memory`: both keep per-process state that several replicas do not
-share. It warns and starts anyway.
+share. It warns and starts anyway, except that with `STAGE=production` the
+settings already refuse `CACHE_BACKEND=memory`.
 
 Envelopes carry a timestamp, expire after sixty seconds, and each nonce is
 accepted once, so a captured request cannot be replayed. Anything malformed,
@@ -406,6 +448,16 @@ The cache is a plain key-value store with TTL, chosen by `CACHE_BACKEND` the
 same way repositories are chosen by `REPO_DATABASE`. Set `CACHE_NAMESPACE` when
 several apps share one DynamoDB table or Mongo collection so their keys do not
 collide.
+
+```python
+sent_today = await get_cache("mail").increment("sent:2026-11-21", ttl_seconds=86400)
+```
+
+`increment` adds one atomically and returns the new value. A missing or expired
+key starts at 1 with the given TTL; a live one keeps its expiry, so the counter
+covers a fixed window. It is atomic on every backend (a single pipeline update in
+Mongo, a conditional `UpdateItem` in DynamoDB), including a key the backend's TTL
+sweep has not deleted yet, so replicas can share a counter.
 
 Both are covered in depth in [`docs/restclient_and_cache.md`](docs/restclient_and_cache.md).
 
@@ -514,14 +566,22 @@ class Settings(PersistenceKitSettings):
 The factories read that object: `get_identity_provider`, `get_token_verifier`,
 `get_export_storage`, `get_cache`, `get_mail_sender`.
 
+With `STAGE=production` the settings refuse to load, with a `ValueError` that
+names the variable, when `CACHE_BACKEND` is `memory` or `AUTH_RATE_LIMIT_ENABLED`
+is `false`. A per-process cache lets each replica count login attempts and accept
+encrypted envelopes on its own, and every deploy would reset them. `dev` and
+`local` start as before.
+
 ### Environment variables
 
 | Variable | Meaning |
 | --- | --- |
+| `STAGE` | `local` (default), `dev` or `production`. `production` refuses `CACHE_BACKEND=memory` and `AUTH_RATE_LIMIT_ENABLED=false` |
 | `REPO_DATABASE` | `memory`, `mongo`, `postgres` or `dynamodb`. Default backend for every entity |
-| `CACHE_BACKEND` | `memory`, `mongo` or `dynamodb`. Defaults to `memory` |
+| `CACHE_BACKEND` | `memory`, `mongo` or `dynamodb`. Defaults to `memory`, which `production` refuses. With `dynamodb` or `mongo` the auth rate limit is shared by every replica |
 | `CACHE_NAMESPACE` | Key prefix, so apps sharing a cache store do not collide |
 | `REST_SERVICE_URLS` | JSON map `{"service": "base_url"}` overriding registered REST base URLs |
+| `AUTH_RATE_LIMIT_ENABLED` | Turns the auth rate limit on or off. Off by default in `local`, on elsewhere; `production` refuses `false` |
 | `TRUSTED_PROXY_HOPS` | Proxies in front of the app that append to `X-Forwarded-For`. The auth rate limit counts the address the outermost one saw, so a forged header does not open a new bucket. `1` by default (one load balancer), `2` behind CloudFront and an ALB, `0` with no proxy |
 | `MONGO_DSN`, `MONGO_DB` | Mongo connection |
 | `POSTGRES_DSN` | Full DSN, if you prefer it to the pieces below |
@@ -660,8 +720,14 @@ poetry install --with dev --all-extras
 poetry run pytest -q
 ```
 
-Current baseline: **793 tests passing** (version 3.21.0). Async tests use
+Current baseline: **839 tests passing** (version 3.22.0). Async tests use
 `pytest-asyncio` in strict mode, so each one carries `@pytest.mark.asyncio`.
+
+`tests/test_cache_mongo.py` runs the Mongo cache against a real server and is
+skipped unless `PERSISTENCE_KIT_TEST_MONGO_DSN` points at one, for example a
+throwaway `docker run -d --rm -p 127.0.0.1:27047:27017 mongo:7` with
+`PERSISTENCE_KIT_TEST_MONGO_DSN=mongodb://127.0.0.1:27047`. Each test uses its
+own database and drops it.
 
 `tests/test_capabilities.py` guards the lazy-import promise: it fails if merely
 importing `persistence_kit` drags in fastapi, pyjwt, boto3 or jinja2.
