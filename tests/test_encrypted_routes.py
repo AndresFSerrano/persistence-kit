@@ -79,7 +79,7 @@ def data_key():
 
 @pytest.fixture
 def settings():
-    def make(stage: DeploymentStage = DeploymentStage.PRODUCTION):
+    def make(stage: DeploymentStage = DeploymentStage.DEV):
         return PersistenceKitSettings(stage=stage)
     return make
 

@@ -7,7 +7,13 @@ from .exceptions import (
     NotFoundException,
     ValidationException,
 )
-from .rate_limit import InMemoryRateLimiter, build_auth_rate_limit_dependency
+from .login_lockout import Lockout, LockoutScope, LoginLockout, build_login_lockout
+from .rate_limit import (
+    CacheRateLimiter,
+    InMemoryRateLimiter,
+    build_auth_rate_limit_dependency,
+    build_rate_limiter,
+)
 from .route_loader import build_api_router
 
 _LAZY = {
@@ -34,7 +40,13 @@ __all__ = [
     "handle_repository_errors",
     "build_api_router",
     "InMemoryRateLimiter",
+    "CacheRateLimiter",
     "build_auth_rate_limit_dependency",
+    "build_rate_limiter",
+    "LoginLockout",
+    "Lockout",
+    "LockoutScope",
+    "build_login_lockout",
     "build_encrypted_route",
     "EncryptedResponseMiddleware",
     "encrypted",

@@ -110,8 +110,15 @@ value = await cache.get("k")               # None if missing/expired
 await cache.delete("k")
 ```
 
-The `Cache` Protocol is `get` / `set` / `delete` / `clear`; values must be
-JSON-serializable for the persistent backends.
+The `Cache` Protocol is `get` / `set` / `delete` / `clear` / `set_if_absent` /
+`increment`; values must be JSON-serializable for the persistent backends.
+
+`increment(key, ttl_seconds=None)` adds one atomically and returns the new value.
+A missing or expired key starts at 1 with the given TTL; a live one keeps its
+expiry (a fixed window). Every backend does it in the store itself, Mongo with a
+pipeline `find_one_and_update` and DynamoDB with a conditional `UpdateItem`, so a
+row the TTL sweep has not removed yet still counts as expired. The auth rate limit
+(`CacheRateLimiter`) is built on it.
 
 ### Sharing one cache across apps
 

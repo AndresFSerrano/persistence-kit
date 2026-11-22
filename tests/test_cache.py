@@ -1,8 +1,12 @@
 import asyncio
+import re
+import time
+from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 from botocore.exceptions import ClientError
+from pymongo.errors import DuplicateKeyError
 
 from persistence_kit.cache import (
     CacheBackend,
@@ -12,7 +16,10 @@ from persistence_kit.cache import (
     get_cache,
     reset_cache,
 )
+from persistence_kit.cache.dynamodb import INCREMENT_ATTEMPTS as DYNAMO_INCREMENT_ATTEMPTS
 from persistence_kit.cache.dynamodb import DynamoCache
+from persistence_kit.cache.mongo import INCREMENT_ATTEMPTS as MONGO_INCREMENT_ATTEMPTS
+from persistence_kit.cache.mongo import MongoCache
 
 
 class FakeDynamoTable:
@@ -40,6 +47,31 @@ class FakeDynamoTable:
                 )
         self.items[Item["pk"]] = dict(Item)
 
+    def update_item(self, Key: dict, **kwargs) -> dict:
+        names = kwargs["ExpressionAttributeNames"]
+        values = kwargs["ExpressionAttributeValues"]
+        existing = self.items.get(Key["pk"])
+        item = dict(existing) if existing is not None else {}
+        if not _condition_holds(kwargs["ConditionExpression"], item, names, values):
+            raise ClientError(
+                {"Error": {"Code": "ConditionalCheckFailedException", "Message": "condition"}},
+                "UpdateItem",
+            )
+        item["pk"] = Key["pk"]
+        updated = {}
+        for name, value in re.findall(r"ADD (#\w+) (:\w+)", kwargs["UpdateExpression"]):
+            attribute = names[name]
+            item[attribute] = item.get(attribute, 0) + values[value]
+            updated[attribute] = item[attribute]
+        for name, kept, value in re.findall(
+            r"SET (#\w+) = if_not_exists\((#\w+), (:\w+)\)", kwargs["UpdateExpression"]
+        ):
+            attribute = names[name]
+            item[attribute] = item.get(names[kept], values[value])
+            updated[attribute] = item[attribute]
+        self.items[Key["pk"]] = item
+        return {"Attributes": updated}
+
     def delete_item(self, Key: dict) -> None:
         self.items.pop(Key["pk"], None)
 
@@ -49,6 +81,25 @@ class FakeDynamoTable:
             prefix = kwargs["ExpressionAttributeValues"][":prefix"]
             items = [item for item in items if item["pk"].startswith(prefix)]
         return {"Items": items}
+
+
+def _condition_holds(condition: str, item: dict, names: dict, values: dict) -> bool:
+    return any(
+        all(_term_holds(term, item, names, values) for term in alternative.split(" AND "))
+        for alternative in condition.split(" OR ")
+    )
+
+
+def _term_holds(term: str, item: dict, names: dict, values: dict) -> bool:
+    existence = re.fullmatch(r"attribute_(not_)?exists\((#\w+)\)", term)
+    if existence:
+        return (names[existence.group(2)] in item) != bool(existence.group(1))
+    name, operator, value = re.fullmatch(r"(#\w+) (>|<=) (:\w+)", term).groups()
+    if names[name] not in item:
+        return False
+    if operator == ">":
+        return item[names[name]] > values[value]
+    return item[names[name]] <= values[value]
 
 
 @pytest.mark.asyncio
@@ -313,4 +364,261 @@ async def test_get_cache_dynamodb_backend_isolates_by_name_on_the_shared_table(m
         assert await get_cache("restclient").get("k") is None
         assert await get_cache("cognito_identity").get("k") == 1
 
+    reset_cache()
+
+
+@pytest.mark.asyncio
+async def test_memory_increment_starts_a_new_key_at_one():
+    cache = InMemoryTTLCache()
+
+    assert await cache.increment("hits", ttl_seconds=60) == 1
+    assert await cache.get("hits") == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_increment_adds_to_a_live_key():
+    cache = InMemoryTTLCache()
+    await cache.set("hits", 4)
+
+    assert await cache.increment("hits") == 5
+    assert await cache.increment("hits") == 6
+    assert await cache.get("hits") == 6
+
+
+@pytest.mark.asyncio
+async def test_memory_increment_starts_over_once_the_key_expires():
+    cache = InMemoryTTLCache()
+    assert await cache.increment("hits", ttl_seconds=0.05) == 1
+    assert await cache.increment("hits", ttl_seconds=0.05) == 2
+    await asyncio.sleep(0.08)
+
+    assert await cache.increment("hits", ttl_seconds=0.05) == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_increment_keeps_the_first_expiry():
+    cache = InMemoryTTLCache()
+    await cache.increment("hits", ttl_seconds=0.05)
+    await cache.increment("hits", ttl_seconds=60)
+    await asyncio.sleep(0.08)
+
+    assert await cache.get("hits") is None
+
+
+@pytest.mark.asyncio
+async def test_memory_increment_does_not_lose_concurrent_hits():
+    cache = InMemoryTTLCache()
+
+    results = await asyncio.gather(*(cache.increment("hits", ttl_seconds=60) for _ in range(50)))
+
+    assert sorted(results) == list(range(1, 51))
+    assert await cache.get("hits") == 50
+
+
+@pytest.mark.asyncio
+async def test_namespaced_increment_prefixes_the_key():
+    inner = InMemoryTTLCache()
+    app_a = NamespacedCache(inner, "app_a")
+    app_b = NamespacedCache(inner, "app_b")
+
+    assert await app_a.increment("hits", ttl_seconds=60) == 1
+    assert await app_a.increment("hits", ttl_seconds=60) == 2
+    assert await app_b.increment("hits", ttl_seconds=60) == 1
+    assert await inner.get("app_a:hits") == 2
+
+
+@pytest.mark.asyncio
+async def test_namespace_isolates_increment(monkeypatch):
+    monkeypatch.setenv("CACHE_BACKEND", "memory")
+    reset_cache()
+
+    monkeypatch.setenv("CACHE_NAMESPACE", "app_a")
+    await get_cache("shared").increment("k", ttl_seconds=60)
+    await get_cache("shared").increment("k", ttl_seconds=60)
+
+    monkeypatch.setenv("CACHE_NAMESPACE", "app_b")
+    assert await get_cache("shared").increment("k", ttl_seconds=60) == 1
+    reset_cache()
+
+
+class DuplicateKeyCollection:
+    def __init__(self, failures: int) -> None:
+        self.failures = failures
+        self.calls = 0
+
+    async def create_index(self, *args, **kwargs) -> str:
+        return "expiresAt_1"
+
+    async def find_one_and_update(self, query: dict, update: list, **kwargs) -> dict:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise DuplicateKeyError("E11000 duplicate key error")
+        return {"_id": query["_id"], "value": 2}
+
+
+@pytest.mark.asyncio
+async def test_mongo_increment_retries_the_upsert_that_lost_the_race():
+    collection = DuplicateKeyCollection(failures=1)
+
+    assert await MongoCache(collection).increment("hits", ttl_seconds=60) == 2
+    assert collection.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_mongo_increment_gives_up_after_a_bounded_number_of_races():
+    collection = DuplicateKeyCollection(failures=MONGO_INCREMENT_ATTEMPTS)
+
+    with pytest.raises(DuplicateKeyError):
+        await MongoCache(collection).increment("hits", ttl_seconds=60)
+    assert collection.calls == MONGO_INCREMENT_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_dynamo_increment_creates_the_row_with_its_ttl():
+    table = FakeDynamoTable()
+    cache = DynamoCache(table)
+    before = time.time()
+
+    assert await cache.increment("hits", ttl_seconds=60) == 1
+
+    row = table.items["hits"]
+    assert row["value"] == 1
+    assert 59 <= float(row["expiresAt"]) - before <= 61
+    assert await cache.get("hits") == 1
+
+
+@pytest.mark.asyncio
+async def test_dynamo_increment_adds_and_keeps_the_expiry():
+    table = FakeDynamoTable()
+    cache = DynamoCache(table)
+    await cache.increment("hits", ttl_seconds=60)
+    first_expiry = table.items["hits"]["expiresAt"]
+
+    assert await cache.increment("hits", ttl_seconds=600) == 2
+    assert await cache.increment("hits", ttl_seconds=600) == 3
+    assert table.items["hits"]["expiresAt"] == first_expiry
+    assert await cache.get("hits") == 3
+
+
+@pytest.mark.asyncio
+async def test_dynamo_increment_without_ttl_never_expires():
+    table = FakeDynamoTable()
+    cache = DynamoCache(table)
+
+    assert await cache.increment("hits") == 1
+    assert await cache.increment("hits") == 2
+    assert "expiresAt" not in table.items["hits"]
+
+
+@pytest.mark.asyncio
+async def test_dynamo_increment_keeps_a_key_without_expiry_without_one():
+    table = FakeDynamoTable()
+    cache = DynamoCache(table)
+    await cache.set("hits", 4)
+
+    assert await cache.increment("hits", ttl_seconds=60) == 5
+    assert "expiresAt" not in table.items["hits"]
+
+
+@pytest.mark.asyncio
+async def test_dynamo_increment_replaces_an_expired_row_the_ttl_did_not_sweep():
+    table = FakeDynamoTable()
+    table.items["hits"] = {"pk": "hits", "value": 9, "expiresAt": Decimal(str(time.time() - 5))}
+    cache = DynamoCache(table)
+
+    assert await cache.increment("hits", ttl_seconds=60) == 1
+    assert table.items["hits"]["expiresAt"] > time.time()
+    assert await cache.increment("hits", ttl_seconds=60) == 2
+
+
+@pytest.mark.asyncio
+async def test_dynamo_increment_replaces_an_expired_row_without_ttl():
+    table = FakeDynamoTable()
+    table.items["hits"] = {"pk": "hits", "value": 9, "expiresAt": Decimal(str(time.time() - 5))}
+    cache = DynamoCache(table)
+
+    assert await cache.increment("hits") == 1
+    assert "expiresAt" not in table.items["hits"]
+
+
+class RacedDynamoTable(FakeDynamoTable):
+    def put_item(self, Item: dict, **kwargs) -> None:
+        if kwargs.get("ConditionExpression") and not getattr(self, "raced", False):
+            self.raced = True
+            self.items[Item["pk"]] = {
+                "pk": Item["pk"],
+                "value": 1,
+                "expiresAt": Decimal(str(time.time() + 60)),
+            }
+        super().put_item(Item, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_dynamo_increment_adds_on_top_of_the_request_that_won_the_race():
+    table = RacedDynamoTable()
+    table.items["hits"] = {"pk": "hits", "value": 9, "expiresAt": Decimal(str(time.time() - 5))}
+    cache = DynamoCache(table)
+
+    assert await cache.increment("hits", ttl_seconds=60) == 2
+    assert table.items["hits"]["value"] == 2
+
+
+class AlwaysLosingDynamoTable(FakeDynamoTable):
+    def update_item(self, Key: dict, **kwargs) -> dict:
+        raise ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException", "Message": "condition"}},
+            "UpdateItem",
+        )
+
+    def put_item(self, Item: dict, **kwargs) -> None:
+        raise ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException", "Message": "exists"}},
+            "PutItem",
+        )
+
+
+@pytest.mark.asyncio
+async def test_dynamo_increment_gives_up_after_a_bounded_number_of_races():
+    with pytest.raises(RuntimeError, match=f"after {DYNAMO_INCREMENT_ATTEMPTS} attempts"):
+        await DynamoCache(AlwaysLosingDynamoTable()).increment("hits", ttl_seconds=60)
+
+
+class BrokenUpdateDynamoTable(FakeDynamoTable):
+    def update_item(self, Key: dict, **kwargs) -> dict:
+        raise ClientError({"Error": {"Code": "ValidationException", "Message": "bad"}}, "UpdateItem")
+
+
+@pytest.mark.asyncio
+async def test_dynamo_increment_lets_other_update_errors_through():
+    with pytest.raises(ClientError, match="ValidationException"):
+        await DynamoCache(BrokenUpdateDynamoTable()).increment("hits", ttl_seconds=60)
+
+
+class BrokenPutDynamoTable(FakeDynamoTable):
+    def put_item(self, Item: dict, **kwargs) -> None:
+        raise ClientError({"Error": {"Code": "ValidationException", "Message": "bad"}}, "PutItem")
+
+
+@pytest.mark.asyncio
+async def test_dynamo_increment_lets_other_put_errors_through():
+    table = BrokenPutDynamoTable()
+    table.items["hits"] = {"pk": "hits", "value": 9, "expiresAt": Decimal(str(time.time() - 5))}
+
+    with pytest.raises(ClientError, match="ValidationException"):
+        await DynamoCache(table).increment("hits", ttl_seconds=60)
+
+
+@pytest.mark.asyncio
+async def test_get_cache_dynamodb_backend_increments_under_its_name(monkeypatch):
+    monkeypatch.setenv("CACHE_BACKEND", "dynamodb")
+    monkeypatch.setenv("CACHE_NAMESPACE", "")
+    reset_cache()
+
+    fake_table = FakeDynamoTable()
+    with patch("boto3.resource") as resource:
+        resource.return_value.Table.return_value = fake_table
+        assert await get_cache("rate-limit").increment("k", ttl_seconds=60) == 1
+        assert await get_cache("rate-limit").increment("k", ttl_seconds=60) == 2
+
+    assert fake_table.items["rate-limit:k"]["value"] == 2
     reset_cache()

@@ -61,11 +61,17 @@ _OPTIONAL_EXPORTS = {
     ),
     "build_api_router": ("persistence_kit.api.route_loader", "build_api_router", "api"),
     "InMemoryRateLimiter": ("persistence_kit.api.rate_limit", "InMemoryRateLimiter", "api"),
+    "CacheRateLimiter": ("persistence_kit.api.rate_limit", "CacheRateLimiter", "api"),
     "build_auth_rate_limit_dependency": (
         "persistence_kit.api.rate_limit",
         "build_auth_rate_limit_dependency",
         "api",
     ),
+    "build_rate_limiter": ("persistence_kit.api.rate_limit", "build_rate_limiter", "api"),
+    "LoginLockout": ("persistence_kit.api.login_lockout", "LoginLockout", "api"),
+    "Lockout": ("persistence_kit.api.login_lockout", "Lockout", "api"),
+    "LockoutScope": ("persistence_kit.api.login_lockout", "LockoutScope", "api"),
+    "build_login_lockout": ("persistence_kit.api.login_lockout", "build_login_lockout", "api"),
     "IdentityProvider": ("persistence_kit.security.ports", "IdentityProvider", "security"),
     "TokenVerifier": ("persistence_kit.security.ports", "TokenVerifier", "security"),
     "CognitoIdentityProvider": (
