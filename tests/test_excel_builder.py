@@ -147,6 +147,14 @@ def test_text_is_escaped_and_loses_the_characters_xml_rejects():
     assert ">AnaMaría &lt;R&amp;D&gt;\tdos</t>" in sheet_xml
 
 
+def test_text_loses_lone_surrogates_and_the_noncharacters_xml_rejects():
+    content = build_xlsx(sheets=[_single_sheet([["Ana\ud800María\udfff\ufffe\uffff"]])])
+
+    sheet_xml = _part(content, "xl/worksheets/sheet1.xml")
+
+    assert ">AnaMaría</t>" in sheet_xml
+
+
 def test_a_row_shorter_than_the_headers_is_accepted():
     sheet = ExcelSheet(name="Datos", headers=("Nombre", "Ciudad"), rows=[["Ana"]])
 
@@ -172,6 +180,29 @@ def test_the_column_width_follows_the_longest_content():
     assert '<col min="5" max="5" width="18" customWidth="1"/>' in sheet_xml
 
 
+def test_a_bool_column_fits_the_longest_word_excel_can_show():
+    sheet = ExcelSheet(name="Datos", headers=("Activo",), rows=[[True], [False]])
+
+    sheet_xml = _part(build_xlsx(sheets=[sheet]), "xl/worksheets/sheet1.xml")
+
+    assert '<col min="1" max="1" width="12" customWidth="1"/>' in sheet_xml
+
+
+def test_text_wraps_only_in_the_columns_that_reach_the_maximum_width():
+    sheet = ExcelSheet(
+        name="Datos",
+        headers=("Justificación", "Lugar", "Días"),
+        rows=[["x" * 200, "Medellín", 3]],
+    )
+
+    sheet_xml = _part(build_xlsx(sheets=[sheet]), "xl/worksheets/sheet1.xml")
+
+    assert '<c r="A2" s="4" t="inlineStr">' in sheet_xml
+    assert '<c r="B2" s="0" t="inlineStr">' in sheet_xml
+    assert '<c r="C2" s="0"><v>3</v></c>' in sheet_xml
+    assert '<c r="A1" s="1" t="inlineStr">' in sheet_xml
+
+
 def test_the_header_row_is_frozen_and_filtered():
     sheet_xml = _first_sheet_xml([["Ana"], ["Luis"]])
 
@@ -185,7 +216,30 @@ def test_the_styles_define_the_date_formats():
 
     assert '<numFmt numFmtId="164" formatCode="dd/mm/yyyy"/>' in styles
     assert '<numFmt numFmtId="165" formatCode="dd/mm/yyyy hh:mm"/>' in styles
-    assert '<cellXfs count="4">' in styles
+    assert '<cellXfs count="5">' in styles
+    assert '<alignment wrapText="1"/>' in styles
+
+
+@pytest.mark.parametrize(
+    "value",
+    [date(1900, 2, 28), date(1899, 12, 31), datetime(1900, 2, 28, 23, 59)],
+)
+def test_a_date_before_march_1900_is_rejected(value: date):
+    with pytest.raises(ValueError, match="before 1900-03-01"):
+        build_xlsx(sheets=[_single_sheet([[value]])])
+
+
+def test_an_aware_datetime_is_checked_after_moving_to_the_timezone():
+    utc_value = datetime.fromisoformat("1900-03-01T03:00:00+00:00")
+
+    with pytest.raises(ValueError, match="before 1900-03-01"):
+        build_xlsx(sheets=[_single_sheet([[utc_value]])], timezone=BOGOTA)
+
+
+def test_march_1_1900_is_the_first_date_accepted():
+    sheet_xml = _first_sheet_xml([[date(1900, 3, 1)]])
+
+    assert '<c r="A2" s="2"><v>61</v></c>' in sheet_xml
 
 
 def test_a_workbook_needs_a_sheet():
@@ -195,7 +249,19 @@ def test_a_workbook_needs_a_sheet():
 
 @pytest.mark.parametrize(
     "name",
-    ["", "x" * 32, "Física/Química", "Física: 2026", "Hoja?", "Hoja*", "[Hoja]", "Hoja\\1"],
+    [
+        "",
+        "x" * 32,
+        "Física/Química",
+        "Física: 2026",
+        "Hoja?",
+        "Hoja*",
+        "[Hoja]",
+        "Hoja\\1",
+        "'Física'",
+        "'Física",
+        "Física'",
+    ],
 )
 def test_an_invalid_sheet_name_is_rejected(name: str):
     sheet = ExcelSheet(name=name, headers=("A",), rows=[])

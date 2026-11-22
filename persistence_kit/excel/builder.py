@@ -11,7 +11,7 @@ from persistence_kit.excel.sheet import CellValue, ExcelSheet
 
 EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-_ILLEGAL_XML_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+_ILLEGAL_XML_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
 _FORBIDDEN_SHEET_NAME_CHARS = re.compile(r"[\[\]:*?/\\]")
 _MAX_SHEET_NAME_LENGTH = 31
 
@@ -19,12 +19,16 @@ _BODY_STYLE = 0
 _HEADER_STYLE = 1
 _DATE_STYLE = 2
 _DATETIME_STYLE = 3
+_WRAPPED_TEXT_STYLE = 4
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
+_FIRST_EXACT_EXCEL_DATE = date(1900, 3, 1)
 _SECONDS_PER_DAY = 86400
 
 _DATE_TEXT_LENGTH = 10
 _DATETIME_TEXT_LENGTH = 16
+_BOOL_DISPLAY_TEXTS = ("TRUE", "FALSE", "VERDADERO", "FALSO", "VERDADEIRO")
+_BOOL_TEXT_LENGTH = max(len(text) for text in _BOOL_DISPLAY_TEXTS)
 _COLUMN_PADDING = 2
 _MIN_COLUMN_WIDTH = 8
 _MAX_COLUMN_WIDTH = 60
@@ -79,11 +83,13 @@ _STYLES = (
     "</fills>"
     '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    '<cellXfs count="4">'
+    '<cellXfs count="5">'
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
     '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
     '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
     '<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1">'
+    '<alignment wrapText="1"/></xf>'
     "</cellXfs>"
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
     "</styleSheet>"
@@ -110,6 +116,8 @@ def _validate_sheets(sheets: Sequence[ExcelSheet]) -> None:
             )
         if _FORBIDDEN_SHEET_NAME_CHARS.search(sheet.name):
             raise ValueError(f"Sheet name {sheet.name!r} cannot contain [ ] : * ? / \\")
+        if sheet.name.startswith("'") or sheet.name.endswith("'"):
+            raise ValueError(f"Sheet name {sheet.name!r} cannot start or end with an apostrophe")
         if sheet.name.lower() in seen_names:
             raise ValueError(f"Sheet name {sheet.name!r} is repeated")
         seen_names.add(sheet.name.lower())
@@ -128,6 +136,12 @@ def _to_local(value: datetime, timezone: tzinfo | None) -> datetime:
 
 
 def _serial(value: date | datetime) -> float:
+    day = value.date() if isinstance(value, datetime) else value
+    if day < _FIRST_EXACT_EXCEL_DATE:
+        raise ValueError(
+            f"Date {value.isoformat()} is before {_FIRST_EXACT_EXCEL_DATE.isoformat()}, "
+            "which Excel shows wrong"
+        )
     if isinstance(value, datetime):
         return (value - _EXCEL_EPOCH).total_seconds() / _SECONDS_PER_DAY
     return (value - _EXCEL_EPOCH.date()).days
@@ -145,7 +159,7 @@ def _number_cell(reference: str, number: float, style: int) -> str:
     return f'<c r="{reference}" s="{style}"><v>{number}</v></c>'
 
 
-def _cell(reference: str, value: CellValue, timezone: tzinfo | None) -> str:
+def _cell(reference: str, value: CellValue, timezone: tzinfo | None, text_style: int) -> str:
     if value is None:
         return ""
     if isinstance(value, bool):
@@ -158,12 +172,14 @@ def _cell(reference: str, value: CellValue, timezone: tzinfo | None) -> str:
         return _number_cell(reference, _serial(_to_local(value, timezone)), _DATETIME_STYLE)
     if isinstance(value, date):
         return _number_cell(reference, _serial(value), _DATE_STYLE)
-    return _text_cell(reference, str(value), _BODY_STYLE)
+    return _text_cell(reference, str(value), text_style)
 
 
 def _display_length(value: CellValue) -> int:
     if value is None:
         return 0
+    if isinstance(value, bool):
+        return _BOOL_TEXT_LENGTH
     if isinstance(value, datetime):
         return _DATETIME_TEXT_LENGTH
     if isinstance(value, date):
@@ -183,9 +199,20 @@ def _column_widths(sheet: ExcelSheet) -> list[int]:
     return widths
 
 
-def _row(number: int, values: Sequence[CellValue], timezone: tzinfo | None) -> str:
+def _text_styles(widths: Sequence[int]) -> list[int]:
+    return [
+        _WRAPPED_TEXT_STYLE if width == _MAX_COLUMN_WIDTH else _BODY_STYLE for width in widths
+    ]
+
+
+def _row(
+    number: int,
+    values: Sequence[CellValue],
+    timezone: tzinfo | None,
+    text_styles: Sequence[int],
+) -> str:
     cells = "".join(
-        _cell(f"{_column_letter(index)}{number}", value, timezone)
+        _cell(f"{_column_letter(index)}{number}", value, timezone, text_styles[index])
         for index, value in enumerate(values)
     )
     return f'<row r="{number}">{cells}</row>'
@@ -209,12 +236,15 @@ def _last_row(sheet: ExcelSheet) -> int:
 
 def _sheet_xml(sheet: ExcelSheet, timezone: tzinfo | None) -> str:
     data_range = f"A1:{_last_column(sheet)}{_last_row(sheet)}"
+    widths = _column_widths(sheet)
+    text_styles = _text_styles(widths)
     columns = "".join(
         f'<col min="{index + 1}" max="{index + 1}" width="{width}" customWidth="1"/>'
-        for index, width in enumerate(_column_widths(sheet))
+        for index, width in enumerate(widths)
     )
     body = _header_row(sheet.headers) + "".join(
-        _row(number, values, timezone) for number, values in enumerate(sheet.rows, start=2)
+        _row(number, values, timezone, text_styles)
+        for number, values in enumerate(sheet.rows, start=2)
     )
     return (
         _XML_DECLARATION

@@ -57,6 +57,7 @@ all = ["fastapi", "boto3", "pyjwt", "python-multipart", "httpx", "cryptography",
 pytest = "^8.3.0"
 pytest-asyncio = ">=0.23.0,<2.0.0"
 opentelemetry-sdk = ">=1.20.0,<2.0.0"
+tzdata = ">=2024.1"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

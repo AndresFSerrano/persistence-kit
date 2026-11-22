@@ -518,7 +518,12 @@ await storage.upload("report.xlsx", content, content_type=EXCEL_MEDIA_TYPE)
 Every sheet gets a bold header row that stays frozen while scrolling and carries
 an autofilter. Each column is as wide as its longest value, header included,
 between 8 and 60 characters, so nothing is cut and a long text does not swallow
-the screen.
+the screen. Text in a column that reaches 60 wraps inside its cell instead of
+hiding behind the next column.
+
+A sheet name has 1 to 31 characters, none of `[ ] : * ? / \`, does not start or
+end with an apostrophe and is not repeated, ignoring case. Otherwise
+`build_xlsx` raises `ValueError`, since Excel would refuse to open the file.
 
 A cell takes `str`, `int`, `float`, `bool`, `date`, `datetime` or `None`:
 
@@ -528,9 +533,15 @@ A cell takes `str`, `int`, `float`, `bool`, `date`, `datetime` or `None`:
   a cell keeps only the clock time. Without `timezone` it raises `ValueError`: the
   kit does not guess, and a report in UTC would show every hour wrong. A naive
   `datetime` is written as it is.
-- `bool` is an Excel boolean, which each reader sees in their own language.
+- A date before 1 March 1900 raises `ValueError`: Excel counts a 29 February
+  1900 that never existed, so it would show 28/02/1900 as 29/02/1900 and the
+  earlier ones as `#######`. A `datetime` with a timezone is checked after it is
+  moved to `timezone`.
+- `bool` is an Excel boolean, which each reader sees in their own language. Its
+  column is wide enough for the longest word, such as `VERDADERO`.
 - `None` leaves the cell empty, and so does a row shorter than the headers.
-- Text is escaped, and the control characters XML rejects are dropped. `NaN` and
+- Text is escaped, and the characters XML rejects are dropped: control
+  characters, lone surrogates and U+FFFE and U+FFFF. `NaN` and
   infinities are written as text, because Excel cannot store them as numbers.
 
 `build_xlsx` raises `ValueError` before writing anything when there are no sheets,
