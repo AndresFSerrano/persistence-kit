@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "persistence-kit"
-version = "3.23.0"
+version = "3.24.0"
 description = "Reusable persistence and repository toolkit"
 authors = ["Andres Felipe Serrano Barrios <andresfserrano1@gmail.com>"]
 readme = "README.md"
@@ -57,6 +57,7 @@ all = ["fastapi", "boto3", "pyjwt", "python-multipart", "httpx", "cryptography",
 pytest = "^8.3.0"
 pytest-asyncio = ">=0.23.0,<2.0.0"
 opentelemetry-sdk = ">=1.20.0,<2.0.0"
+tzdata = ">=2024.1"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

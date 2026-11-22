@@ -186,6 +186,7 @@ add, not an obscure `ImportError`.
 | `restclient/` | HTTP client with pluggable auth, endpoint resolution, retries and DTO decoding |
 | `cache/` | Key-value cache with TTL and atomic counters: memory, Mongo or DynamoDB |
 | `mail/` | Outbound mail through an SMTP relay, with templates that live in the app |
+| `excel/` | `.xlsx` workbooks with several sheets, real dates and columns sized to their content |
 | `resilience/` | Circuit breaker, shared by anything that calls out |
 | `api/` | Reusable FastAPI pieces: error handlers, pagination, rate limiting, encrypted routes |
 | `bootstrap/` | Startup helpers, configuration registry, seed orchestration |
@@ -577,6 +578,67 @@ only if `MAIL_SMTP_USERNAME` is set, so a relay that authorizes by IP works as i
 Needs `[mail]` for templates. `MailMessage` and the senders use only the standard
 library.
 
+## Excel
+
+Writing an `.xlsx` report without a spreadsheet library. Each `ExcelSheet` is one
+tab, and `build_xlsx` returns the workbook as bytes, ready to upload or to serve
+with `EXCEL_MEDIA_TYPE`.
+
+```python
+from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
+
+from persistence_kit.excel import EXCEL_MEDIA_TYPE, ExcelSheet, build_xlsx
+
+content = build_xlsx(
+    sheets=[
+        ExcelSheet(
+            name="Comisiones",
+            headers=["Nombre", "Inicio", "Solicitud", "Aprobada"],
+            rows=[["Ana", date(2026, 9, 29), datetime(2026, 9, 29, 14, 12, tzinfo=UTC), True]],
+        ),
+        ExcelSheet(name="Filtros", headers=["Filtro", "Valor"], rows=[["Unidad", "Física"]]),
+    ],
+    timezone=ZoneInfo("America/Bogota"),
+)
+await storage.upload("report.xlsx", content, content_type=EXCEL_MEDIA_TYPE)
+```
+
+Every sheet gets a bold header row that stays frozen while scrolling and carries
+an autofilter. Each column is as wide as its longest value, header included,
+between 8 and 60 characters, so nothing is cut and a long text does not swallow
+the screen. Text in a column that reaches 60 wraps inside its cell instead of
+hiding behind the next column.
+
+A sheet name has 1 to 31 characters, none of `[ ] : * ? / \`, does not start or
+end with an apostrophe and is not repeated, ignoring case. Otherwise
+`build_xlsx` raises `ValueError`, since Excel would refuse to open the file.
+
+A cell takes `str`, `int`, `float`, `bool`, `date`, `datetime` or `None`:
+
+- `date` and `datetime` are real Excel dates, shown as `dd/mm/yyyy` and
+  `dd/mm/yyyy hh:mm`, so they sort and filter as dates, not as text.
+- A `datetime` with a timezone is moved to `timezone` before it is written, since
+  a cell keeps only the clock time. Without `timezone` it raises `ValueError`: the
+  kit does not guess, and a report in UTC would show every hour wrong. A naive
+  `datetime` is written as it is.
+- A date before 1 March 1900 raises `ValueError`: Excel counts a 29 February
+  1900 that never existed, so it would show 28/02/1900 as 29/02/1900 and the
+  earlier ones as `#######`. A `datetime` with a timezone is checked after it is
+  moved to `timezone`.
+- `bool` is an Excel boolean, which each reader sees in their own language. Its
+  column is wide enough for the longest word, such as `VERDADERO`.
+- `None` leaves the cell empty, and so does a row shorter than the headers.
+- Text is escaped, and the characters XML rejects are dropped: control
+  characters, lone surrogates and U+FFFE and U+FFFF. `NaN` and
+  infinities are written as text, because Excel cannot store them as numbers.
+
+`build_xlsx` raises `ValueError` before writing anything when there are no sheets,
+a sheet has no headers, a row has more cells than headers, or a sheet name is
+empty, longer than 31 characters, repeated ignoring case, or uses `[ ] : * ? / \`.
+
+Uses only the standard library, so it needs no extra.
+
 ## Resilience
 
 `CircuitBreaker` is domain-agnostic and shared by anything that calls out: after
@@ -759,7 +821,7 @@ poetry install --with dev --all-extras
 poetry run pytest -q
 ```
 
-Current baseline: **857 tests passing** (version 3.23.0). Async tests use
+Current baseline: **901 tests passing** (version 3.24.0). Async tests use
 `pytest-asyncio` in strict mode, so each one carries `@pytest.mark.asyncio`.
 
 `tests/test_cache_mongo.py` runs the Mongo cache against a real server and is
