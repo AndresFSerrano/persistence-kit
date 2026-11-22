@@ -346,6 +346,43 @@ keeps the count inside the process.
 With `STAGE=production` the limit cannot be turned off and the cache cannot be
 `memory`; see [Settings](#settings).
 
+### Login lockout
+
+The rate limit counts every attempt from an address. `LoginLockout` counts only
+the failed ones, and blocks for `AUTH_LOCKOUT_SECONDS` once a scope reaches its cap:
+
+| Scope | Counts | Cap |
+| --- | --- | --- |
+| `pair` | failures of one username from one address | `AUTH_LOCKOUT_PAIR_ATTEMPTS` (5) |
+| `user` | failures of one username from any address | `AUTH_LOCKOUT_USER_ATTEMPTS` (20) |
+| `client` | failures from one address with any username | `AUTH_LOCKOUT_CLIENT_ATTEMPTS` (20) |
+
+```python
+from persistence_kit import build_login_lockout
+
+lockout = build_login_lockout(settings)
+
+locked = await lockout.blocked(username=username, client_id=client_ip)
+if locked:
+    raise HTTPException(429, headers={"Retry-After": str(locked.retry_after)})
+if not await credentials_are_valid(username, password):
+    await lockout.fail(username=username, client_id=client_ip)
+    raise HTTPException(401)
+await lockout.succeed(username=username, client_id=client_ip)
+```
+
+Check `blocked` before checking the password, so a blocked attempt is refused
+even with the right one and the answer is the same whether the user exists or
+not. `fail` returns the `Lockout` it just started, if any, for the log. `succeed`
+clears the `pair` count only, so a login that works does not hand a distributed
+attacker a fresh `user` budget. A failure without a username (`username=None`)
+counts for the address alone. A cap of `0` turns that scope off.
+
+The counts live in `get_cache("login-lockout")`, so `CACHE_BACKEND` decides
+whether every replica shares them, and the keys are SHA-256 digests: the cache
+never holds a username or an address. The lockout follows
+`AUTH_RATE_LIMIT_ENABLED`, off by default in `local`.
+
 ## Encrypted payloads
 
 For data that should not be readable between the browser and your handler, not
@@ -581,7 +618,9 @@ encrypted envelopes on its own, and every deploy would reset them. `dev` and
 | `CACHE_BACKEND` | `memory`, `mongo` or `dynamodb`. Defaults to `memory`, which `production` refuses. With `dynamodb` or `mongo` the auth rate limit is shared by every replica |
 | `CACHE_NAMESPACE` | Key prefix, so apps sharing a cache store do not collide |
 | `REST_SERVICE_URLS` | JSON map `{"service": "base_url"}` overriding registered REST base URLs |
-| `AUTH_RATE_LIMIT_ENABLED` | Turns the auth rate limit on or off. Off by default in `local`, on elsewhere; `production` refuses `false` |
+| `AUTH_RATE_LIMIT_ENABLED` | Turns the auth rate limit and the login lockout on or off. Off by default in `local`, on elsewhere; `production` refuses `false` |
+| `AUTH_LOCKOUT_PAIR_ATTEMPTS`, `AUTH_LOCKOUT_USER_ATTEMPTS`, `AUTH_LOCKOUT_CLIENT_ATTEMPTS` | Failed logins before the login lockout blocks a username from one address (5), a username from anywhere (20) and an address (20). `0` turns that scope off |
+| `AUTH_LOCKOUT_SECONDS` | How long the login lockout lasts, `900` by default |
 | `TRUSTED_PROXY_HOPS` | Proxies in front of the app that append to `X-Forwarded-For`. The auth rate limit counts the address the outermost one saw, so a forged header does not open a new bucket. `1` by default (one load balancer), `2` behind CloudFront and an ALB, `0` with no proxy |
 | `MONGO_DSN`, `MONGO_DB` | Mongo connection |
 | `POSTGRES_DSN` | Full DSN, if you prefer it to the pieces below |
@@ -720,7 +759,7 @@ poetry install --with dev --all-extras
 poetry run pytest -q
 ```
 
-Current baseline: **839 tests passing** (version 3.22.0). Async tests use
+Current baseline: **857 tests passing** (version 3.23.0). Async tests use
 `pytest-asyncio` in strict mode, so each one carries `@pytest.mark.asyncio`.
 
 `tests/test_cache_mongo.py` runs the Mongo cache against a real server and is

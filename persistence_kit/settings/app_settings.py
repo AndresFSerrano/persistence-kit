@@ -58,6 +58,10 @@ class PersistenceKitSettings(RepoSettings):
     auth_login_rate_limit: int = 10
     auth_refresh_rate_limit: int = 30
     auth_password_rate_limit: int = 5
+    auth_lockout_pair_attempts: int = 5
+    auth_lockout_user_attempts: int = 20
+    auth_lockout_client_attempts: int = 20
+    auth_lockout_seconds: int = 900
     trusted_proxy_hops: int = Field(default=1, ge=0)
 
     # Export Storage

@@ -7,6 +7,7 @@ from .exceptions import (
     NotFoundException,
     ValidationException,
 )
+from .login_lockout import Lockout, LockoutScope, LoginLockout, build_login_lockout
 from .rate_limit import (
     CacheRateLimiter,
     InMemoryRateLimiter,
@@ -42,6 +43,10 @@ __all__ = [
     "CacheRateLimiter",
     "build_auth_rate_limit_dependency",
     "build_rate_limiter",
+    "LoginLockout",
+    "Lockout",
+    "LockoutScope",
+    "build_login_lockout",
     "build_encrypted_route",
     "EncryptedResponseMiddleware",
     "encrypted",
