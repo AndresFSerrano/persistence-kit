@@ -11,6 +11,8 @@ from persistence_kit.repository.dynamodb_repo.dynamodb_mapper import (
 
 PARTITION_KEY = "pk"
 TTL_ATTRIBUTE = "expiresAt"
+VALUE_ATTRIBUTE = "value"
+INCREMENT_ATTEMPTS = 5
 
 
 class DynamoCache:
@@ -63,6 +65,17 @@ class DynamoCache:
 
         return await asyncio.to_thread(_put)
 
+    async def increment(self, key: str, ttl_seconds: float | None = None) -> int:
+        """Suma con ``UpdateItem`` (``ADD``) condicionado a que la fila no exista
+        o siga vigente, asi crear y sumar son una sola escritura atomica.
+
+        Una fila vencida que el TTL aun no borra se reemplaza con un ``PutItem``
+        condicionado a que siga vencida; si otro request gano la carrera y ya la
+        reemplazo, se vuelve a sumar sobre la suya (a lo sumo
+        ``INCREMENT_ATTEMPTS`` vueltas).
+        """
+        return await asyncio.to_thread(self._increment_sync, key, ttl_seconds)
+
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self._table.delete_item, Key={PARTITION_KEY: key})
 
@@ -75,6 +88,90 @@ class DynamoCache:
         if ttl_seconds:
             item[TTL_ATTRIBUTE] = _serialize_value(time.time() + ttl_seconds)
         return item
+
+    def _increment_sync(self, key: str, ttl_seconds: float | None) -> int:
+        for _ in range(INCREMENT_ATTEMPTS):
+            now = _serialize_value(time.time())
+            value = self._add_one(key, now, ttl_seconds)
+            if value is None and ttl_seconds:
+                value = self._add_one_to_a_key_without_expiry(key)
+            if value is not None:
+                return value
+            if self._put_a_fresh_counter(key, now, ttl_seconds):
+                return 1
+        raise RuntimeError(
+            f"Could not increment cache key {key!r} after {INCREMENT_ATTEMPTS} attempts"
+        )
+
+    def _add_one(self, key: str, now: Any, ttl_seconds: float | None) -> int | None:
+        names = {"#pk": PARTITION_KEY, "#value": VALUE_ATTRIBUTE, "#exp": TTL_ATTRIBUTE}
+        values: dict[str, Any] = {":one": 1, ":now": now}
+        if ttl_seconds:
+            values[":exp"] = _serialize_value(time.time() + ttl_seconds)
+            return self._conditional_add(
+                key,
+                "ADD #value :one SET #exp = if_not_exists(#exp, :exp)",
+                "attribute_not_exists(#pk) OR #exp > :now",
+                names,
+                values,
+            )
+        return self._conditional_add(
+            key,
+            "ADD #value :one",
+            "attribute_not_exists(#pk) OR attribute_not_exists(#exp) OR #exp > :now",
+            names,
+            values,
+        )
+
+    def _add_one_to_a_key_without_expiry(self, key: str) -> int | None:
+        return self._conditional_add(
+            key,
+            "ADD #value :one",
+            "attribute_exists(#pk) AND attribute_not_exists(#exp)",
+            {"#pk": PARTITION_KEY, "#value": VALUE_ATTRIBUTE, "#exp": TTL_ATTRIBUTE},
+            {":one": 1},
+        )
+
+    def _conditional_add(
+        self,
+        key: str,
+        update: str,
+        condition: str,
+        names: dict[str, str],
+        values: dict[str, Any],
+    ) -> int | None:
+        from botocore.exceptions import ClientError
+
+        try:
+            response = self._table.update_item(
+                Key={PARTITION_KEY: key},
+                UpdateExpression=update,
+                ConditionExpression=condition,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+                ReturnValues="UPDATED_NEW",
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                return None
+            raise
+        return _deserialize_value(response["Attributes"][VALUE_ATTRIBUTE])
+
+    def _put_a_fresh_counter(self, key: str, now: Any, ttl_seconds: float | None) -> bool:
+        from botocore.exceptions import ClientError
+
+        try:
+            self._table.put_item(
+                Item=self._build_item(key, 1, ttl_seconds),
+                ConditionExpression="attribute_not_exists(#pk) OR #exp <= :now",
+                ExpressionAttributeNames={"#pk": PARTITION_KEY, "#exp": TTL_ATTRIBUTE},
+                ExpressionAttributeValues={":now": now},
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                return False
+            raise
+        return True
 
     def _clear_sync(self, prefix: str) -> int:
         scan_kwargs: dict[str, Any] = {"ProjectionExpression": "#pk"}

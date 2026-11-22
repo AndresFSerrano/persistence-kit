@@ -23,3 +23,11 @@ class Cache(Protocol):
         ...
 
     async def set_if_absent(self, key: str, value: Any, ttl_seconds: float | None = None) -> bool: ...
+
+    async def increment(self, key: str, ttl_seconds: float | None = None) -> int:
+        """Suma 1 de forma atomica y devuelve el valor nuevo.
+
+        Si la clave no existe o ya vencio, arranca en 1 con ``ttl_seconds``; si
+        existe y esta vigente, suma y conserva su vencimiento (ventana fija).
+        La clave debe guardar un entero."""
+        ...

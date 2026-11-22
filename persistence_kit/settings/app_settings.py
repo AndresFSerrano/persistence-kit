@@ -3,6 +3,7 @@ from enum import Enum
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import SettingsConfigDict
 
+from persistence_kit.settings.cache_settings import CacheBackend, CacheSettings
 from persistence_kit.settings.repo_settings import RepoSettings
 from persistence_kit.settings.parsers import parse_str_map, split_csv_list
 
@@ -134,6 +135,22 @@ class PersistenceKitSettings(RepoSettings):
     def resolve_rate_limit_default(self) -> "PersistenceKitSettings":
         if self.auth_rate_limit_enabled is None:
             self.auth_rate_limit_enabled = not self.is_local_stage
+        return self
+
+    @model_validator(mode="after")
+    def require_shared_rate_limit_in_production(self) -> "PersistenceKitSettings":
+        if self.stage != DeploymentStage.PRODUCTION:
+            return self
+        if CacheSettings().cache_backend is CacheBackend.MEMORY:
+            raise ValueError(
+                "CACHE_BACKEND=memory is not allowed when STAGE is production: the auth "
+                "rate limit and the encrypted replay guard need a cache every replica "
+                "shares. Use dynamodb or mongo."
+            )
+        if not self.auth_rate_limit_enabled:
+            raise ValueError(
+                "AUTH_RATE_LIMIT_ENABLED cannot be false when STAGE is production."
+            )
         return self
 
     @field_validator("memory_seed_role_codes", mode="before")
