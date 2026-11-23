@@ -13,7 +13,7 @@ from starlette.responses import Response
 from persistence_kit.api.exceptions import NotFoundException
 from persistence_kit.settings import PersistenceKitSettings
 from persistence_kit.storage.contracts import DEFAULT_CONTENT_TYPE
-from persistence_kit.storage.errors import StorageConfigError
+from persistence_kit.storage.errors import StorageConfigError, StorageNotFoundError
 from persistence_kit.storage.factory import get_export_storage
 from persistence_kit.storage.local import LocalExportStorageProvider, LocalObjectStorage
 from persistence_kit.storage.media import MediaStorage
@@ -135,7 +135,14 @@ async def serve_media_object(
     key: str,
     *,
     media_type: str | None = None,
+    redirect: bool = True,
 ) -> Response:
+    """Entrega un objeto del almacenamiento de medios.
+
+    En disco manda el archivo. En S3 redirige a una URL firmada; con `redirect=False`
+    lo lee y lo entrega desde la API, para un front que lo pide con `fetch` y no deja
+    conectarse a otros orígenes (`connect-src 'self'`).
+    """
     backend = storage.object_storage
     if isinstance(backend, LocalObjectStorage):
         file_path = backend.get_file_path(key)
@@ -144,8 +151,26 @@ async def serve_media_object(
         if media_type:
             return FileResponse(path=file_path, media_type=media_type)
         return await _stored_type_response(backend, key, file_path)
-    presigned_url = await storage.generate_presigned_url(key)
-    return RedirectResponse(url=presigned_url)
+    if redirect:
+        presigned_url = await storage.generate_presigned_url(key)
+        return RedirectResponse(url=presigned_url)
+    return await _proxied_response(storage, key, media_type)
+
+
+async def _proxied_response(
+    storage: MediaStorage,
+    key: str,
+    media_type: str | None,
+) -> Response:
+    try:
+        data = await storage.read(key)
+        content_type = media_type or await storage.object_storage.content_type_of(key)
+    except StorageNotFoundError as exc:
+        raise NotFoundException(detail="Archivo no encontrado.") from exc
+    headers = {}
+    if not media_type and _renders_active_content(content_type):
+        headers["Content-Disposition"] = f'attachment; filename="{Path(key).name}"'
+    return Response(content=data, media_type=content_type, headers=headers)
 
 
 async def _stored_type_response(

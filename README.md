@@ -273,6 +273,12 @@ as an attachment, so it never renders on your API's origin. A local key with no 
 raises `NotFoundException`, so it stays a 404 when a use case wrapped in
 `handle_service_errors` calls it.
 
+With `redirect=False` it reads the S3 object and sends it from your API instead of
+redirecting, with the same type rules and a 404 for a missing key. Use it when the
+front fetches the file with `fetch` and its Content-Security-Policy only allows
+`connect-src 'self'`: the browser blocks the redirect to the bucket, and the bucket
+needs no CORS.
+
 FastAPI apps can mount `build_local_export_storage_router(...)` to serve local
 files, passing their settings provider, an optional current-user dependency, and
 an authorization callback. It sends each file with its stored type; a file
