@@ -1,3 +1,4 @@
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -345,3 +346,83 @@ async def test_serve_media_object_redirects_for_non_local_backend(monkeypatch, r
 
     assert isinstance(response, RedirectResponse)
     assert response.headers["location"] == "https://example.com/signed?token=abc"
+
+
+class _FakeStoredObjects:
+    def __init__(self, objects):
+        self.objects = objects
+
+    def get_object(self, *, Bucket, Key):
+        if Key not in self.objects:
+            raise s3_mod.ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        return {"Body": io.BytesIO(self.objects[Key][0])}
+
+    def head_object(self, *, Bucket, Key):
+        if Key not in self.objects:
+            raise s3_mod.ClientError({"Error": {"Code": "404"}}, "HeadObject")
+        return {"ContentType": self.objects[Key][1]}
+
+
+def _s3_media_storage(monkeypatch, objects):
+    fake_client = _FakeStoredObjects(objects)
+    monkeypatch.setattr(
+        s3_mod, "boto3", SimpleNamespace(client=lambda service_name, region_name: fake_client)
+    )
+    settings = PersistenceKitSettings(
+        media_storage_provider="s3",
+        aws_s3_media_bucket="my-media",
+        aws_region="us-east-1",
+    )
+    return build_media_storage(settings, namespace="signatures", url_prefix="/media/signatures")
+
+
+@pytest.mark.asyncio
+async def test_serve_media_object_without_redirect_sends_the_s3_bytes(
+    monkeypatch, reset_media_factory_caches
+):
+    storage = _s3_media_storage(monkeypatch, {"signatures/abc/firma.png": (b"png", "image/png")})
+
+    response = await serve_media_object(storage, "abc/firma.png", redirect=False)
+
+    assert not isinstance(response, RedirectResponse)
+    assert response.body == b"png"
+    assert response.media_type == "image/png"
+    assert "content-disposition" not in response.headers
+
+
+@pytest.mark.asyncio
+async def test_serve_media_object_without_redirect_keeps_the_requested_type(
+    monkeypatch, reset_media_factory_caches
+):
+    storage = _s3_media_storage(
+        monkeypatch, {"signatures/abc/doc.bin": (b"%PDF", "application/octet-stream")}
+    )
+
+    response = await serve_media_object(
+        storage, "abc/doc.bin", media_type="application/pdf", redirect=False
+    )
+
+    assert (response.body, response.media_type) == (b"%PDF", "application/pdf")
+
+
+@pytest.mark.asyncio
+async def test_serve_media_object_without_redirect_sends_active_content_as_attachment(
+    monkeypatch, reset_media_factory_caches
+):
+    storage = _s3_media_storage(
+        monkeypatch, {"signatures/abc/dibujo.svg": (b"<svg/>", "image/svg+xml")}
+    )
+
+    response = await serve_media_object(storage, "abc/dibujo.svg", redirect=False)
+
+    assert response.headers["content-disposition"] == 'attachment; filename="dibujo.svg"'
+
+
+@pytest.mark.asyncio
+async def test_serve_media_object_without_redirect_answers_404_for_a_missing_key(
+    monkeypatch, reset_media_factory_caches
+):
+    storage = _s3_media_storage(monkeypatch, {})
+
+    with pytest.raises(NotFoundException):
+        await serve_media_object(storage, "abc/nada.png", redirect=False)
