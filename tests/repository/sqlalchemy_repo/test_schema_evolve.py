@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from sqlalchemy.dialects import postgresql, sqlite
+
 from persistence_kit.repository.sqlalchemy_repo.schema_evolve import (
     _constraint_exists,
     _safe_identifier,
@@ -17,6 +19,8 @@ class FakeResult:
 
 
 class FakeSyncConn:
+    dialect = postgresql.dialect()
+
     def __init__(self):
         self.executed = []
         self._fake_inspector = None
@@ -126,3 +130,37 @@ def test_safe_identifier_short_and_long():
     safe = _safe_identifier(long_name)
     assert len(safe) <= 63
     assert safe != long_name
+
+
+def test_ensure_foreign_keys_on_sqlite_only_creates_the_index():
+    class SqliteConn(FakeSyncConn):
+        dialect = sqlite.dialect()
+
+    class TableLike:
+        name = "parent"
+
+    conn = SqliteConn()
+    ensure_foreign_keys(conn, TableLike, {"child_id": ("child_table", "id")})
+
+    sqls = [sql for sql, _ in conn.executed]
+    assert len(sqls) == 1
+    assert 'CREATE INDEX IF NOT EXISTS "idx_parent_child_id"' in sqls[0]
+
+
+def test_ensure_missing_columns_on_sqlite_adds_required_columns_as_nullable(monkeypatch):
+    import persistence_kit.repository.sqlalchemy_repo.schema_evolve as mod
+
+    class SqliteConn(FakeSyncConn):
+        dialect = sqlite.dialect()
+
+    class TableLike:
+        name = "entities"
+
+    conn = SqliteConn()
+    conn._fake_inspector = FakeInspector({"id", "age"})
+    monkeypatch.setattr(mod, "inspect", lambda connection: connection._fake_inspector)
+
+    ensure_missing_columns(conn, TableLike, Entity)
+
+    sqls = [sql for sql, _ in conn.executed]
+    assert sqls == ['ALTER TABLE "entities" ADD COLUMN "name" VARCHAR NULL']

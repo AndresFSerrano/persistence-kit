@@ -2,7 +2,6 @@ import hashlib
 
 from dataclasses import fields as dc_fields
 from sqlalchemy import inspect, text
-from sqlalchemy.dialects import postgresql
 from persistence_kit.repository.sqlalchemy_repo.table_factory import _unwrap_optional, _sa_type
 
 
@@ -12,6 +11,10 @@ def _safe_identifier(name: str, limit: int = 63) -> str:
     digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
     head = name[: limit - len(digest) - 1]
     return f"{head}_{digest}"
+
+def _is_sqlite(sync_conn) -> bool:
+    return sync_conn.dialect.name == "sqlite"
+
 
 def ensure_missing_columns(sync_conn, table, entity_type):
     inspector = inspect(sync_conn)
@@ -23,8 +26,8 @@ def ensure_missing_columns(sync_conn, table, entity_type):
         ft, is_optional = _unwrap_optional(f.type)
         sa_type = _sa_type(ft)
         dtype = sa_type() if callable(sa_type) else sa_type
-        ddl = dtype.compile(dialect=postgresql.dialect())
-        nullable = "NULL" if is_optional else "NOT NULL"
+        ddl = dtype.compile(dialect=sync_conn.dialect)
+        nullable = "NULL" if is_optional or _is_sqlite(sync_conn) else "NOT NULL"
         sync_conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col}" {ddl} {nullable}'))
 
 def _constraint_exists(sync_conn, table_name: str, constraint_name: str) -> bool:
@@ -37,12 +40,15 @@ def _constraint_exists(sync_conn, table_name: str, constraint_name: str) -> bool
     return bool(sync_conn.execute(q, {"t": table_name, "c": constraint_name}).scalar())
 
 def ensure_foreign_keys(sync_conn, table, fk_map: dict[str, tuple[str, str]]) -> None:
+    adds_constraints = not _is_sqlite(sync_conn)
     for local_col, (target_tbl, target_col) in fk_map.items():
         index_name = _safe_identifier(f"idx_{table.name}_{local_col}")
         cname = _safe_identifier(f'fk_{table.name}_{local_col}__{target_tbl}_{target_col}')
-        if _constraint_exists(sync_conn, table.name, cname):
+        if adds_constraints and _constraint_exists(sync_conn, table.name, cname):
             continue
         sync_conn.execute(text(f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{table.name}" ("{local_col}")'))
+        if not adds_constraints:
+            continue
         sync_conn.execute(text(
             f'ALTER TABLE "{table.name}" '
             f'ADD CONSTRAINT "{cname}" FOREIGN KEY ("{local_col}") '

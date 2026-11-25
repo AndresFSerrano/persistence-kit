@@ -6,3 +6,4 @@ class Database(str, Enum):
     MONGO = "mongo"
     POSTGRES = "postgres"
     DYNAMODB = "dynamodb"
+    SQLITE = "sqlite"

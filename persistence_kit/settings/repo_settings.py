@@ -20,6 +20,8 @@ class RepoSettings(BaseSettings):
     postgres_db: str | None = None
     postgres_ssl: bool = False
 
+    sqlite_path: str | None = None
+
     dynamodb_table_prefix: str = ""
     dynamodb_region: str = "us-east-1"
 
