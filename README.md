@@ -69,9 +69,9 @@ What goes in a registration:
 | --- | --- |
 | `entity` | The dataclass this key maps to |
 | `collection` | Table or collection name in the backing store |
-| `database` | `Database.MEMORY`, `MONGO`, `POSTGRES` or `DYNAMODB`. Defaults to `REPO_DATABASE` |
+| `database` | `Database.MEMORY`, `MONGO`, `POSTGRES`, `SQLITE` or `DYNAMODB`. Defaults to `REPO_DATABASE` |
 | `unique` | Indexed lookups, `{"index_name": "field"}`, used by `get_by_index` |
-| `indexes` | Composite, non-unique indexes for filters and counts, `{"index_name": ["field", ...]}`. Postgres and Mongo create them; memory ignores them; DynamoDB rejects them |
+| `indexes` | Composite, non-unique indexes for filters and counts, `{"index_name": ["field", ...]}`. Postgres, SQLite and Mongo create them; memory ignores them; DynamoDB rejects them |
 | `relations` | How this entity joins to others, including many-to-many through a pivot |
 
 Relations are what `get_repo_view(...)` reads to return an entity with its
@@ -86,6 +86,22 @@ get_repo_view("user")               # repository that populates relations
 provide_repo("user")                # FastAPI dependency
 provide_view_repo("user")           # FastAPI dependency, populated
 ```
+
+### SQLite
+
+For an app that runs on one machine and does not need a database server, set
+`REPO_DATABASE=sqlite` and `SQLITE_PATH` to the file, and install the `sqlite`
+extra. It uses the same SQL repository as Postgres, accent-insensitive search
+included. What differs:
+
+- Relations get their index but no foreign key constraint, because SQLite cannot
+  add one to an existing table.
+- A field added to an entity later becomes a nullable column, even if the field
+  is required, because SQLite cannot add a `NOT NULL` column without a default.
+- Table names cannot start with `sqlite_`; SQLite keeps that prefix for itself.
+- One process at a time. Inside `transaction()`, `for_update=True` does not lock
+  a single row: SQLite locks the whole file while it writes.
+- Idempotency keys (`transaction(idempotency_key=...)`) are not available.
 
 ## Transactions
 
@@ -109,7 +125,7 @@ async with transaction():
   hand out consecutive numbers with no repeats and no gaps. Outside a
   transaction it raises `TransactionRequiredError`.
 - A `transaction()` opened inside another one joins the outer one.
-- Postgres and memory take part. Memory behaves the same way for tests: it locks
+- Postgres, SQLite and memory take part. Memory behaves the same way for tests: it locks
   rows, undoes the writes when the block fails and, inside the block, returns
   copies, so a change only lands through `update`. Plain reads are not isolated
   in memory: another transaction can see a write before it commits.
@@ -162,11 +178,12 @@ pip install "persistence-kit[api,security,restclient]"
 | `storage-s3` | S3 object storage adapter | boto3 |
 | `storage-routes` | FastAPI route to serve local exports | fastapi, python-multipart |
 | `dynamodb` | DynamoDB repository backend | boto3 |
+| `sqlite` | SQLite repository backend, for an app that runs on one machine | aiosqlite |
 | `restclient` | The REST client and its cache | httpx |
 | `encrypted` | Encrypted request and response payloads | fastapi, cryptography |
 | `mail` | Mail templates rendered with Jinja2 (sending itself needs no extra) | jinja2 |
 | `tracing` | A span for every REST call, inside the request's trace | opentelemetry-api |
-| `testing` | Everything the test suite needs | fastapi, pyjwt, httpx, python-multipart, cryptography, jinja2, opentelemetry-api |
+| `testing` | Everything the test suite needs | fastapi, pyjwt, httpx, python-multipart, cryptography, jinja2, opentelemetry-api, aiosqlite |
 | `all` | Every optional capability | all of the above |
 
 Importing `persistence_kit` never loads an optional dependency by itself. Ask for
@@ -682,7 +699,7 @@ encrypted envelopes on its own, and every deploy would reset them. `dev` and
 | Variable | Meaning |
 | --- | --- |
 | `STAGE` | `local` (default), `dev` or `production`. `production` refuses `CACHE_BACKEND=memory` and `AUTH_RATE_LIMIT_ENABLED=false` |
-| `REPO_DATABASE` | `memory`, `mongo`, `postgres` or `dynamodb`. Default backend for every entity |
+| `REPO_DATABASE` | `memory`, `mongo`, `postgres`, `sqlite` or `dynamodb`. Default backend for every entity |
 | `CACHE_BACKEND` | `memory`, `mongo` or `dynamodb`. Defaults to `memory`, which `production` refuses. With `dynamodb` or `mongo` the auth rate limit is shared by every replica |
 | `CACHE_NAMESPACE` | Key prefix, so apps sharing a cache store do not collide |
 | `REST_SERVICE_URLS` | JSON map `{"service": "base_url"}` overriding registered REST base URLs |
@@ -694,6 +711,7 @@ encrypted envelopes on its own, and every deploy would reset them. `dev` and
 | `POSTGRES_DSN` | Full DSN, if you prefer it to the pieces below |
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB` | Postgres connection |
 | `POSTGRES_SSL` | Set when the server requires TLS |
+| `SQLITE_PATH` | File that holds the SQLite database, required by `sqlite` |
 | `DYNAMODB_REGION`, `DYNAMODB_TABLE_PREFIX` | DynamoDB connection |
 | `ENCRYPTED_PRIVATE_KEY` | Base64 PEM of the RSA private key that unwraps encrypted payloads |
 | `ENCRYPTED_TYPE` | `memory` (default, key generated at startup), `local`, or `kms` for AWS KMS |

@@ -11,8 +11,6 @@ from persistence_kit.contracts.view_repository import ViewRepository
 from persistence_kit.settings.constants import Database
 from persistence_kit.settings.repo_settings import RepoSettings
 from persistence_kit.repository.memory_repo.memory_repo import MemoryRepository
-from persistence_kit.repository.dynamodb_repo.dynamodb_mapper import DynamoMapper
-from persistence_kit.repository.dynamodb_repo.dynamodb_repo import DynamoRepository
 from persistence_kit.repository.mongo_repo.mongo_mapper import DataclassMapper
 from persistence_kit.repository.mongo_repo.mongo_repo import MongoRepository
 from persistence_kit.repository.sqlalchemy_repo.sqlalchemy_dataclass_mapper import SqlDataclassMapper
@@ -100,10 +98,13 @@ def _repo_cached(entity_key: str, resolved: Database) -> Repository[Any, UUID]:
         return MongoRepository[Any, UUID](db, mapper, indexes=indexes)
 
     if resolved is Database.DYNAMODB:
+        from persistence_kit.repository.dynamodb_repo.dynamodb_mapper import DynamoMapper
+        from persistence_kit.repository.dynamodb_repo.dynamodb_repo import DynamoRepository
+
         if indexes:
             raise ValueError(
                 f"DynamoDB repositories do not support composite indexes: '{entity_key}' declares "
-                f"{', '.join(indexes)}. Use Postgres or Mongo for this entity, or drop 'indexes'."
+                f"{', '.join(indexes)}. Use Postgres, SQLite or Mongo for this entity, or drop 'indexes'."
             )
         prefix = settings.dynamodb_table_prefix
         table_name = f"{prefix}{config['collection']}" if prefix else config["collection"]
@@ -119,8 +120,8 @@ def _repo_cached(entity_key: str, resolved: Database) -> Repository[Any, UUID]:
             table_name, dynamo_mapper, region=settings.dynamodb_region
         )
 
-    if resolved is Database.POSTGRES:
-        engine = get_engine()
+    if resolved in (Database.POSTGRES, Database.SQLITE):
+        engine = get_engine() if resolved is Database.POSTGRES else get_engine(Database.SQLITE)
         table_name = config["collection"]
         table = build_table_from_dataclass(entity_type, table_name)
         mapper = SqlDataclassMapper(

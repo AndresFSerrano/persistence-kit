@@ -2,12 +2,32 @@ from dataclasses import is_dataclass, fields as dc_fields
 from typing import Any, get_origin, get_args, Union
 import types
 from enum import Enum
-from sqlalchemy import Table, Column, String, Boolean, Integer, Float, DateTime, MetaData
+from sqlalchemy import JSON, Table, Column, String, Boolean, Integer, Float, DateTime, MetaData
+from sqlalchemy.types import TypeDecorator
 from sqlalchemy.dialects.postgresql import UUID as PGUUID, ARRAY
 import uuid
 import datetime
 
 metadata = MetaData()
+
+
+class UuidListAsJson(TypeDecorator):
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        return [str(item) for item in value]
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        return [uuid.UUID(item) for item in value]
+
+
+def _uuid_list_type():
+    return ARRAY(PGUUID(as_uuid=True)).with_variant(UuidListAsJson(), "sqlite")
 
 def _unwrap_optional(tp: Any) -> tuple[Any, bool]:
     origin = get_origin(tp)
@@ -51,7 +71,7 @@ def build_table_from_dataclass(entity_type: type, table_name: str, meta: MetaDat
         ft, is_optional = _unwrap_optional(f.type)
 
         if _is_list_of(ft, uuid.UUID):
-            cols.append(Column(f.name, ARRAY(PGUUID(as_uuid=True)), nullable=True))
+            cols.append(Column(f.name, _uuid_list_type(), nullable=True))
             continue
 
         coltype = _sa_type(ft)
